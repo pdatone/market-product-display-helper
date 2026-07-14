@@ -294,8 +294,12 @@
 <button id="menuBtn" title="開啟選單">☰</button>
 <div id="drawerBackdrop"></div>
 
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
 <script type="module">
-import * as THREE from './vendor/three.module.js';
+import * as THREE from 'three';
+import { OrbitControls } from './vendor/OrbitControls.js';
 
 /* ================= state ================= */
 const STORAGE_KEY = 'market-display-v1';
@@ -771,6 +775,8 @@ function renderStats(elevations) {
 const wrap = document.getElementById('canvas3dWrap');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 wrap.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -784,31 +790,45 @@ function shade(hex, f) {
 
 const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
 
-scene.add(new THREE.HemisphereLight(0xf8fbef, 0x87947e, 1.1));
-const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-sun.position.set(150, 300, 180);
+scene.add(new THREE.AmbientLight('#fff4dc', 1.0));
+const sun = new THREE.DirectionalLight('#ffffff', 1.1);
+sun.position.set(180, 260, 140);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 10;
+sun.shadow.camera.far = 900;
+sun.shadow.camera.left = -300;
+sun.shadow.camera.right = 300;
+sun.shadow.camera.top = 300;
+sun.shadow.camera.bottom = -300;
 scene.add(sun);
+const fillLight = new THREE.PointLight('#ffd9b8', 0.65, 900);
+fillLight.position.set(-220, 180, -180);
+scene.add(fillLight);
 
 // 地面
 const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(600, 48),
-  new THREE.MeshLambertMaterial({ color: '#c6d1bd' })
+  new THREE.PlaneGeometry(2000, 2000),
+  new THREE.MeshStandardMaterial({ color: '#c6d1bd', roughness: 1 })
 );
 ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
 scene.add(ground);
 
-// 地面格線（低對比灰綠，僅供對位參考；略高於地面圓盤避免 z-fighting）
+// 地面格線（低對比灰綠，僅供對位參考；略高於地面避免 z-fighting）
 const gridHelper = new THREE.GridHelper(1200, 60, 0x93a28c, 0x93a28c);
 gridHelper.material.transparent = true;
 gridHelper.material.opacity = 0.22;
-gridHelper.position.y = 0.08;
+gridHelper.position.y = 0.2;
 scene.add(gridHelper);
+
+scene.fog = new THREE.Fog(state.scene.bg, 280, 850);
 
 /* 依場景設定套用背景色與地面色（地面比背景略深，帶出立體感） */
 function applySceneColors() {
   scene.background.set(state.scene.bg);
   ground.material.color.set(state.scene.groundColor);
-  applyCamera();
+  scene.fog.color.set(state.scene.bg);
 }
 
 let tableGroup = new THREE.Group();
@@ -820,39 +840,46 @@ scene.add(tableGroup, itemGroup, figureGroup, handleGroup);
 function build3dTable() {
   disposeGroup(tableGroup);
   const { w, d, h } = state.table;
-  const topMat = new THREE.MeshLambertMaterial({ color: '#b3af9b' });
-  const legMat = new THREE.MeshLambertMaterial({ color: '#7f7d6c' });
+  const topMat = new THREE.MeshStandardMaterial({ color: '#b3af9b', roughness: 0.85, metalness: 0.02 });
+  const legMat = new THREE.MeshStandardMaterial({ color: '#7f7d6c', roughness: 0.85, metalness: 0.02 });
   const topThick = 4;
   const top = new THREE.Mesh(new THREE.BoxGeometry(w, topThick, d), topMat);
   top.position.y = h - topThick / 2;
+  top.castShadow = true; top.receiveShadow = true;
   tableGroup.add(top);
   const legSize = 5;
   const lx = w / 2 - legSize, lz = d / 2 - legSize;
   for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(legSize, h - topThick, legSize), legMat);
     leg.position.set(sx * lx, (h - topThick) / 2, sz * lz);
+    leg.castShadow = true; leg.receiveShadow = true;
     tableGroup.add(leg);
   }
   // 桌布：頂布 + 四邊裙擺（下擺長度由 state.scene.clothDrop 決定，不超過桌高；clothOn 關閉時裸桌不建桌布）
   if (state.scene.clothOn === false) return;
-  const clothMat = new THREE.MeshLambertMaterial({ color: state.scene.clothColor });
+  const clothMat = new THREE.MeshStandardMaterial({ color: state.scene.clothColor, roughness: 0.9, metalness: 0.02 });
   const cloth = new THREE.Mesh(new THREE.BoxGeometry(w + 4, 0.5, d + 4), clothMat);
   cloth.position.y = h + 0.25;
+  cloth.castShadow = true; cloth.receiveShadow = true;
   tableGroup.add(cloth);
   const drop = Math.min(state.scene.clothDrop, h);
   if (drop > 0) {
     const skirtY = h + 0.5 - drop / 2;
     const front = new THREE.Mesh(new THREE.BoxGeometry(w + 4, drop, 0.5), clothMat);
     front.position.set(0, skirtY, d / 2 + 1.75);
+    front.castShadow = true; front.receiveShadow = true;
     tableGroup.add(front);
     const back = new THREE.Mesh(new THREE.BoxGeometry(w + 4, drop, 0.5), clothMat);
     back.position.set(0, skirtY, -(d / 2 + 1.75));
+    back.castShadow = true; back.receiveShadow = true;
     tableGroup.add(back);
     const right = new THREE.Mesh(new THREE.BoxGeometry(0.5, drop, d + 4), clothMat);
     right.position.set(w / 2 + 1.75, skirtY, 0);
+    right.castShadow = true; right.receiveShadow = true;
     tableGroup.add(right);
     const left = new THREE.Mesh(new THREE.BoxGeometry(0.5, drop, d + 4), clothMat);
     left.position.set(-(w / 2 + 1.75), skirtY, 0);
+    left.castShadow = true; left.receiveShadow = true;
     tableGroup.add(left);
   }
 }
@@ -890,8 +917,8 @@ function buildFigure() {
   figureGroup.position.set(p.x - w / 2, 0, p.y - d / 2);
   if (!state.scene.figureOn) return;
   const H = state.scene.figureH;
-  const bodyMat = new THREE.MeshLambertMaterial({ color: '#d8d5cf' });
-  const jointMat = new THREE.MeshLambertMaterial({ color: '#c2beb6' });
+  const bodyMat = new THREE.MeshStandardMaterial({ color: '#d8d5cf', roughness: 0.7, metalness: 0.02 });
+  const jointMat = new THREE.MeshStandardMaterial({ color: '#c2beb6', roughness: 0.7, metalness: 0.02 });
 
   // 四肢圓柱：靠近軀幹端（rTrunkEnd）較粗，遠端（rFarEnd）較細；yFar/yTrunk 為兩端關節球中心高度
   function limb(rTrunkEnd, rFarEnd, yFar, yTrunk, x) {
@@ -969,6 +996,7 @@ function buildFigure() {
     hand.position.set(x, wristY - H * 0.045, 0);
     figureGroup.add(hand);
   }
+  figureGroup.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 }
 
 /* 依形狀組出 3D 模型（局部座標：原點在物件中心的桌面高度） */
@@ -978,9 +1006,11 @@ function buildItemGroup(it, bad) {
   const addBox = (bw, bh, bd, x, y, z, mat) => {
     const box = new THREE.Mesh(
       new THREE.BoxGeometry(bw, bh, bd),
-      mat || new THREE.MeshLambertMaterial({ color })
+      mat || new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.02 })
     );
     box.position.set(x, y, z);
+    box.castShadow = true;
+    box.receiveShadow = true;
     g.add(box);
     const edges = new THREE.LineSegments(
       new THREE.EdgesGeometry(box.geometry),
@@ -999,7 +1029,7 @@ function buildItemGroup(it, bad) {
     }
   } else if (it.shape === 'pegboard') {
     // 只有板身，佔位深度＝板厚
-    const mat = new THREE.MeshLambertMaterial({ color, map: bad ? null : pegboardTexture() });
+    const mat = new THREE.MeshStandardMaterial({ color, map: bad ? null : pegboardTexture(), roughness: 0.85, metalness: 0.02 });
     addBox(it.w, it.h, it.d, 0, it.h / 2, 0, mat);
   } else {
     addBox(it.w, it.h, it.d, 0, it.h / 2, 0);
@@ -1062,7 +1092,7 @@ function buildRotHandle(elevations) {
   // 小球本體
   const ball = new THREE.Mesh(
     new THREE.SphereGeometry(2.5, 16, 12),
-    new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x39423a, emissiveIntensity: 0.2, depthTest: false })
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x39423a, emissiveIntensity: 0.2, depthTest: false })
   );
   ball.position.set(0, 0, -len);
   ball.renderOrder = 11;
@@ -1077,49 +1107,42 @@ function buildRotHandle(elevations) {
   rotHandleInfo = { id: p.id, y };
 }
 
-/* --- 軌道視角（右鍵旋轉、中鍵平移、滾輪縮放；pan 為中鍵平移的累積偏移量） --- */
-const orbit = { theta: -Math.PI / 5, phi: Math.PI / 3.2, dist: 260, pan: new THREE.Vector3() };
+/* --- 軌道視角（OrbitControls：右鍵旋轉、中鍵平移、滾輪縮放，含慣性阻尼；左鍵留給物件互動） --- */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.minDistance = 60;
+controls.maxDistance = 1500;
+
 function rebuild3dCamera() {
-  orbit.dist = Math.max(state.table.w, state.table.d) * 1.6 + 80;
-  orbit.pan.set(0, 0, 0); // 重設鏡頭時平移偏移歸零，回到看整張桌子
-  applyCamera();
-}
-function applyCamera() {
-  const { h } = state.table;
-  // 視角目標點 = 基準點（桌面偏上）＋ 中鍵平移偏移量
-  const target = new THREE.Vector3(0, h * 0.9, 0).add(orbit.pan);
-  camera.position.set(
-    target.x + orbit.dist * Math.sin(orbit.phi) * Math.sin(orbit.theta),
-    target.y + orbit.dist * Math.cos(orbit.phi),
-    target.z + orbit.dist * Math.sin(orbit.phi) * Math.cos(orbit.theta)
-  );
-  camera.lookAt(target);
-  renderer.render(scene, camera);
+  const { w, d, h } = state.table;
+  const dist = Math.max(w, d) * 1.6 + 80;
+  controls.target.set(0, h * 0.9, 0);
+  camera.position.set(dist * 0.55, dist * 0.7, dist * 0.55);
+  controls.update();
 }
 /* 視角預設：俯視（桌面正上方往下看整張桌子） */
 function viewTop() {
   const { w, d, h } = state.table;
-  orbit.theta = 0;
-  orbit.phi = 0.02; // 取很小值而非 0，避免 lookAt 的上向量退化
-  orbit.dist = Math.max(w, d) * 1.4 + 60;
-  orbit.pan.set(0, h * 0.1, 0); // 基準點 (0, h*0.9, 0) 加偏移 → 對準桌面中心 (0, h, 0)
-  applyCamera();
+  controls.target.set(0, h, 0);
+  camera.position.set(0, h + Math.max(w, d) * 1.4 + 60, 0.01);
+  controls.update();
 }
 /* 視角預設：前視（從桌子前方＝顧客側水平偏上一點看向桌面） */
 function viewFront() {
   const { w, d, h } = state.table;
-  orbit.theta = 0;
-  orbit.phi = Math.PI / 2.05;
-  orbit.dist = Math.max(w, d) * 1.4 + 60;
-  orbit.pan.set(0, 0, 0); // 目標點回到基準點 (0, h*0.9, 0)
-  applyCamera();
+  controls.target.set(0, h * 0.9, 0);
+  camera.position.set(0, h * 1.2, Math.max(w, d) * 1.4 + 60);
+  controls.update();
 }
 document.getElementById('btnViewTop').addEventListener('click', viewTop);
 document.getElementById('btnViewFront').addEventListener('click', viewFront);
 
 /* ================= 3D 視口互動 =================
-   左鍵＝選取／拖曳物件（含旋轉把手、人偶），右鍵＝旋轉視角，中鍵＝平移，滾輪＝縮放；
-   觸控：單指按物件＝拖曳、按空白＝旋轉視角、雙指捏合＝縮放 */
+   左鍵＝選取／拖曳物件（含旋轉把手、人偶），右鍵＝旋轉視角（OrbitControls），中鍵＝平移，滾輪＝縮放；
+   觸控：單指按物件＝拖曳、按空白＝旋轉視角（OrbitControls 接手）、雙指＝縮放／平移（OrbitControls） */
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 /* 依滑鼠事件位置設定 raycaster 的射線 */
@@ -1147,20 +1170,12 @@ function findPlacedId(obj) {
   return null;
 }
 
-let nav = null;    // 視角操作中：{ mode: 'orbit' | 'pan', pointerId, x, y, isTouch, moved }
 let drag3d = null; // 物件互動中：{ mode: 'item' | 'figure' | 'handle', pointerId, ... }
-/* 觸控指標追蹤（只收 pointerType === 'touch'，給雙指捏合縮放用；滑鼠不進來） */
-const activePointers = new Map(); // pointerId -> { x, y }
-let pinchStart = null; // { dist, orbitDist } 雙指開始捏合時的距離與 orbit.dist
+/* 觸控在空白處按下時的起點：{ pointerId, x, y, moved }，供 pointerup 判斷是否為「點一下」（未移動）以取消選取；
+   有移動則代表 OrbitControls 正在接手旋轉視角，不處理 */
+let blankTouchStart = null;
 
-function pointA() { return [...activePointers.values()][0]; }
-function pointB() { return [...activePointers.values()][1]; }
-function pinchDist() {
-  const a = pointA(), b = pointB();
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-/* 左鍵（或觸控單指）按下：依 raycast 結果進入對應模式，優先序：旋轉把手 > 人偶 > 物件 > 空白 */
+/* 左鍵（或觸控單指）按下：依 raycast 結果進入對應模式，優先序：旋轉把手 > 人偶 > 物件 > 空白；回傳是否命中互動物件 */
 function beginPrimary(evt) {
   const isTouch = evt.pointerType === 'touch';
   const { w, d, h } = state.table;
@@ -1168,7 +1183,8 @@ function beginPrimary(evt) {
   // 1) 旋轉把手（優先於一般物件）
   if (rotHandleInfo && raycaster.intersectObject(handleGroup, true).length) {
     drag3d = { mode: 'handle', pointerId: evt.pointerId, id: rotHandleInfo.id, planeY: rotHandleInfo.y, moved: false };
-    return;
+    controls.enabled = false;
+    return true;
   }
   // 2) 人偶（開啟時可拖曳，拖曳平面取地面 y=0）
   if (state.scene.figureOn && raycaster.intersectObject(figureGroup, true).length) {
@@ -1179,8 +1195,9 @@ function beginPrimary(evt) {
         mode: 'figure', pointerId: evt.pointerId,
         dx: fp.x - (hit.x + w / 2), dy: fp.y - (hit.z + d / 2), moved: false,
       };
+      controls.enabled = false;
     }
-    return;
+    return true;
   }
   // 3) 一般物件：選取＋開始拖曳
   let placedId = null;
@@ -1207,60 +1224,31 @@ function beginPrimary(evt) {
         mode: 'item', pointerId: evt.pointerId, id: placedId, planeY,
         dx: p.cx - (hit.x + w / 2), dy: p.cy - (hit.z + d / 2), moved: false,
       };
+      controls.enabled = false;
     }
-    return;
+    return true;
   }
-  // 4) 空白處：滑鼠＝取消選取（絕不旋轉視角）；觸控＝旋轉視角，放開時沒移動才視為點一下取消選取
-  if (isTouch) {
-    nav = { mode: 'orbit', pointerId: evt.pointerId, x: evt.clientX, y: evt.clientY, isTouch: true, moved: false };
-  } else {
-    select(null);
-  }
+  // 4) 空白處：滑鼠＝取消選取（絕不旋轉視角）；觸控＝不處理，交給 OrbitControls 旋轉視角
+  if (!isTouch) select(null);
+  return false;
 }
 
 renderer.domElement.addEventListener('pointerdown', (evt) => {
   if (evt.pointerType === 'touch') {
-    activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
-    renderer.domElement.setPointerCapture(evt.pointerId);
-    if (activePointers.size >= 2) {
-      // 第二指落下：取消單指拖曳／旋轉，改走雙指捏合縮放（取消不存檔）
-      drag3d = null;
-      nav = null;
-      pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
-      evt.preventDefault();
-      return;
-    }
-    pinchStart = null;
-    beginPrimary(evt);
+    if (drag3d) return; // 已有拖曳中的手指，忽略新落下的手指（交給 OrbitControls 處理雙指手勢）
+    const hit = beginPrimary(evt);
+    blankTouchStart = hit ? null : { pointerId: evt.pointerId, x: evt.clientX, y: evt.clientY, moved: false };
     return;
   }
-  // 滑鼠／觸控筆：已有進行中的模式時，忽略後按下的其他鍵（只認先開始的模式）
-  if (nav || drag3d) return;
-  renderer.domElement.setPointerCapture(evt.pointerId);
+  // 滑鼠／觸控筆：已有進行中的拖曳時，忽略後按下的其他鍵（只認先開始的拖曳）
+  if (drag3d) return;
   if (evt.button === 0) {
     beginPrimary(evt);
-  } else if (evt.button === 1) {
-    evt.preventDefault(); // 避免瀏覽器中鍵 autoscroll
-    nav = { mode: 'pan', pointerId: evt.pointerId, x: evt.clientX, y: evt.clientY, isTouch: false, moved: false };
-  } else if (evt.button === 2) {
-    nav = { mode: 'orbit', pointerId: evt.pointerId, x: evt.clientX, y: evt.clientY, isTouch: false, moved: false };
   }
+  // 中鍵平移／右鍵旋轉視角交給 OrbitControls 處理
 });
 
 renderer.domElement.addEventListener('pointermove', (evt) => {
-  // 觸控雙指捏合縮放
-  if (evt.pointerType === 'touch' && activePointers.has(evt.pointerId)) {
-    activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
-    if (activePointers.size >= 2) {
-      if (!pinchStart) pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
-      const dd = pinchDist();
-      if (dd > 0) {
-        orbit.dist = Math.min(1500, Math.max(60, pinchStart.orbitDist * (pinchStart.dist / dd)));
-        applyCamera();
-      }
-      return;
-    }
-  }
   // 物件互動（拖曳移動／旋轉把手／人偶）
   if (drag3d && drag3d.pointerId === evt.pointerId) {
     const { w, d } = state.table;
@@ -1301,61 +1289,29 @@ renderer.domElement.addEventListener('pointermove', (evt) => {
     }
     return;
   }
-  // 視角操作（右鍵旋轉／中鍵平移／觸控單指空白處旋轉）
-  if (nav && nav.pointerId === evt.pointerId) {
-    const dx = evt.clientX - nav.x, dy = evt.clientY - nav.y;
-    if (Math.abs(dx) + Math.abs(dy) > 1) nav.moved = true;
-    if (nav.mode === 'orbit') {
-      orbit.theta -= dx * 0.006;
-      orbit.phi = Math.min(Math.PI / 2.05, Math.max(0.15, orbit.phi - dy * 0.006));
-    } else {
-      // 平移：沿相機的右向量／上向量移動目標點，讓畫面跟著手走；速度與距離成正比
-      const k = orbit.dist / 600;
-      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
-      const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
-      orbit.pan.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
-    }
-    nav.x = evt.clientX;
-    nav.y = evt.clientY;
-    applyCamera();
+  // 觸控在空白處按下後移動：交給 OrbitControls 旋轉視角，這裡只記錄「有移動」供放開時判斷
+  if (blankTouchStart && blankTouchStart.pointerId === evt.pointerId) {
+    const dx = evt.clientX - blankTouchStart.x, dy = evt.clientY - blankTouchStart.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) blankTouchStart.moved = true;
   }
 });
 
 function releasePointer(evt) {
-  if (evt.pointerType === 'touch') {
-    activePointers.delete(evt.pointerId);
-    if (activePointers.size >= 2) {
-      // 仍有兩指以上：以剩下的兩指重設捏合起點，避免跳動
-      pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
-    } else if (activePointers.size === 1 && !drag3d && !nav) {
-      // 從雙指回到單指：以剩下那指繼續旋轉視角，避免手勢中斷（moved 設 true，放開不當作點擊取消選取）
-      pinchStart = null;
-      const pid = [...activePointers.keys()][0];
-      const p = pointA();
-      nav = { mode: 'orbit', pointerId: pid, x: p.x, y: p.y, isTouch: true, moved: true };
-    } else {
-      pinchStart = null;
-    }
-  }
   if (drag3d && drag3d.pointerId === evt.pointerId) {
     if (drag3d.moved) saveState(); // 有實際移動／旋轉才存檔
     drag3d = null;
+    controls.enabled = true;
   }
-  if (nav && nav.pointerId === evt.pointerId) {
-    // 觸控在空白處點一下（沒有拖動）＝取消選取
-    if (nav.isTouch && !nav.moved) select(null);
-    nav = null;
+  if (blankTouchStart && blankTouchStart.pointerId === evt.pointerId) {
+    // 觸控在空白處點一下（沒有拖動）＝取消選取；有拖動則是 OrbitControls 在轉視角，不處理
+    if (!blankTouchStart.moved) select(null);
+    blankTouchStart = null;
   }
 }
 renderer.domElement.addEventListener('pointerup', releasePointer);
 renderer.domElement.addEventListener('pointercancel', releasePointer);
 // 右鍵用於旋轉視角，攔掉瀏覽器右鍵選單
 renderer.domElement.addEventListener('contextmenu', (evt) => evt.preventDefault());
-renderer.domElement.addEventListener('wheel', (evt) => {
-  evt.preventDefault();
-  orbit.dist = Math.min(1500, Math.max(60, orbit.dist * (evt.deltaY > 0 ? 1.08 : 0.93)));
-  applyCamera();
-}, { passive: false });
 
 function resize3d() {
   const rect = wrap.getBoundingClientRect();
@@ -1363,9 +1319,15 @@ function resize3d() {
   renderer.setSize(rect.width, rect.height);
   camera.aspect = rect.width / rect.height;
   camera.updateProjectionMatrix();
-  applyCamera();
 }
 new ResizeObserver(resize3d).observe(wrap);
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
 
 /* ================= 版面分隔條（側欄寬度可拖拉調整） ================= */
 const UI_KEY = 'market-display-ui';
@@ -1455,7 +1417,6 @@ function update() {
   build3dItems(elevations);
   buildFigure();
   buildRotHandle(elevations);
-  applyCamera();
 }
 
 renderSidebar();

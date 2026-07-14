@@ -79,6 +79,16 @@
     border-radius: 6px;
     font-size: 13px;
   }
+  .param-grid { display: grid; gap: 6px 8px; margin-bottom: 8px; }
+  .param-grid.cols3 { grid-template-columns: repeat(3, 1fr); }
+  .param-grid.cols2 { grid-template-columns: repeat(2, 1fr); }
+  .param-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .param-cell > span { font-size: 11px; color: var(--muted); }
+  .param-cell input[type=number] { width: 100%; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+  .param-cell input[type=number]:disabled { background: #e8ede2; color: var(--muted); }
+  .param-cell input[type=color] { width: 100%; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  .param-cell input[type=color]:disabled { opacity: .45; }
+  .param-cell .chk { height: 30px; display: flex; align-items: center; }
   button {
     font-family: inherit;
     font-size: 12px;
@@ -218,20 +228,24 @@
 <main>
   <div id="sidebar">
     <section>
-      <h2>桌子尺寸（cm）</h2>
-      <div class="field-row"><label>寬</label><input type="number" id="tableW" min="20" max="600" step="1"></div>
-      <div class="field-row"><label>深</label><input type="number" id="tableD" min="20" max="300" step="1"></div>
-      <div class="field-row"><label>高</label><input type="number" id="tableH" min="20" max="150" step="1"></div>
+      <h2>桌子</h2>
+      <div class="param-grid cols3">
+        <label class="param-cell"><span>寬 cm</span><input type="number" id="tableW" min="20" max="600" step="1"></label>
+        <label class="param-cell"><span>深 cm</span><input type="number" id="tableD" min="20" max="300" step="1"></label>
+        <label class="param-cell"><span>高 cm</span><input type="number" id="tableH" min="20" max="150" step="1"></label>
+        <label class="param-cell"><span>桌布</span><span class="chk"><input type="checkbox" id="scClothOn"></span></label>
+        <label class="param-cell"><span>下擺 cm</span><input type="number" id="scDrop" min="0" step="1" title="桌布下擺長度（cm）"></label>
+        <label class="param-cell"><span>桌布顏色</span><input type="color" id="scCloth"></label>
+      </div>
       <button class="primary" id="applyTable" style="width:100%">套用桌子尺寸</button>
     </section>
     <section>
       <h2>場景</h2>
-      <div class="field-row"><label>背景</label><input type="color" id="scBg"></div>
-      <div class="field-row"><label>桌布</label><input type="color" id="scCloth"></div>
-      <div class="field-row"><label>下擺</label><input type="number" id="scDrop" min="0" step="1" title="桌布下擺長度（cm）"></div>
-      <div class="field-row"><label>人偶</label>
-        <input type="checkbox" id="scFigOn" style="flex:none">
-        <input type="number" id="scFigH" min="100" max="210" step="1" title="身高（cm）">
+      <div class="param-grid cols2">
+        <label class="param-cell"><span>背景顏色</span><input type="color" id="scBg"></label>
+        <label class="param-cell"><span>地板顏色</span><input type="color" id="scGround"></label>
+        <label class="param-cell"><span>人偶</span><span class="chk"><input type="checkbox" id="scFigOn"></span></label>
+        <label class="param-cell"><span>身高 cm</span><input type="number" id="scFigH" min="100" max="210" step="1" title="身高（cm）"></label>
       </div>
     </section>
     <section>
@@ -327,7 +341,7 @@ const DEFAULT_STATE = {
   ],
   placed: [],   // { id, itemId, cx, cy, rot }  cx/cy = 中心點（cm），rot = 任意角度（度，0–360，浮點數）
   nextId: 100,
-  scene: { bg: '#e2e8dc', clothColor: '#eef1e6', clothDrop: 20, figureOn: false, figureH: 165 },
+  scene: { bg: '#e2e8dc', groundColor: '#c6d1bd', clothColor: '#eef1e6', clothOn: true, clothDrop: 20, figureOn: false, figureH: 165 },
 };
 
 let state = loadState();
@@ -343,6 +357,10 @@ function loadState() {
   if (!s) return structuredClone(DEFAULT_STATE);
   // 舊存檔沒有場景設定（背景／桌布／人偶）時補上預設值
   if (!s.scene) s.scene = structuredClone(DEFAULT_STATE.scene);
+  // 舊存檔沒有地板顏色時，沿用舊版「地面比背景略深」的推導結果，保持使用者目前看到的地板色不變
+  if (!s.scene.groundColor) s.scene.groundColor = '#' + shade(s.scene.bg, 0.85).getHexString();
+  // 舊存檔沒有桌布開關時，預設為開（維持原本一定有桌布的行為）
+  if (s.scene.clothOn === undefined) s.scene.clothOn = true;
   // 舊存檔沒有的新預設道具（階梯、洞洞板）補進物件庫
   for (const def of DEFAULT_STATE.library) {
     if (def.shape && !s.library.some(i => i.shape === def.shape)) {
@@ -495,8 +513,9 @@ function render2d(elevations) {
   svg.setAttribute('viewBox', `${-PAD} ${-PAD} ${w + PAD * 2} ${d + PAD * 2}`);
   svg.innerHTML = '';
 
-  // 桌面
-  const tbl = el('rect', { x: 0, y: 0, width: w, height: d, fill: tint(state.scene.clothColor, 0.75), stroke: '#9dab94', 'stroke-width': 0.6, rx: 1 });
+  // 桌面（桌布關閉時顯示裸桌底色，不套用桌布色）
+  const tableFill = state.scene.clothOn === false ? '#f8faf4' : tint(state.scene.clothColor, 0.75);
+  const tbl = el('rect', { x: 0, y: 0, width: w, height: d, fill: tableFill, stroke: '#9dab94', 'stroke-width': 0.6, rx: 1 });
   svg.appendChild(tbl);
 
   // 格線（5cm）
@@ -725,16 +744,25 @@ document.addEventListener('keydown', (evt) => {
 });
 
 /* ================= sidebar ================= */
+/* 依桌布開關切換桌布顏色／下擺欄位的 disabled 狀態 */
+function syncClothUI() {
+  const on = state.scene.clothOn;
+  document.getElementById('scCloth').disabled = !on;
+  document.getElementById('scDrop').disabled = !on;
+}
 function renderSidebar() {
   document.getElementById('tableW').value = state.table.w;
   document.getElementById('tableD').value = state.table.d;
   document.getElementById('tableH').value = state.table.h;
 
   document.getElementById('scBg').value = state.scene.bg;
+  document.getElementById('scGround').value = state.scene.groundColor;
+  document.getElementById('scClothOn').checked = state.scene.clothOn;
   document.getElementById('scCloth').value = state.scene.clothColor;
   document.getElementById('scDrop').value = state.scene.clothDrop;
   document.getElementById('scFigOn').checked = state.scene.figureOn;
   document.getElementById('scFigH').value = state.scene.figureH;
+  syncClothUI();
 
   const list = document.getElementById('libList');
   list.innerHTML = '';
@@ -815,6 +843,11 @@ document.getElementById('scBg').addEventListener('input', (evt) => {
   saveState();
   applySceneColors();
 });
+document.getElementById('scGround').addEventListener('input', (evt) => {
+  state.scene.groundColor = evt.target.value;
+  saveState();
+  applySceneColors();
+});
 document.getElementById('scCloth').addEventListener('input', (evt) => {
   state.scene.clothColor = evt.target.value;
   saveState(); update();
@@ -822,6 +855,11 @@ document.getElementById('scCloth').addEventListener('input', (evt) => {
 document.getElementById('scDrop').addEventListener('input', (evt) => {
   const v = Math.max(0, Math.min(state.table.h, Number(evt.target.value) || 0));
   state.scene.clothDrop = v;
+  saveState(); update();
+});
+document.getElementById('scClothOn').addEventListener('change', (evt) => {
+  state.scene.clothOn = evt.target.checked;
+  syncClothUI();
   saveState(); update();
 });
 document.getElementById('scFigOn').addEventListener('change', (evt) => {
@@ -973,7 +1011,7 @@ scene.add(ground);
 /* 依場景設定套用背景色與地面色（地面比背景略深，帶出立體感） */
 function applySceneColors() {
   scene.background.set(state.scene.bg);
-  ground.material.color.copy(shade(state.scene.bg, 0.85));
+  ground.material.color.set(state.scene.groundColor);
   applyCamera();
 }
 
@@ -998,7 +1036,8 @@ function build3dTable() {
     leg.position.set(sx * lx, (h - topThick) / 2, sz * lz);
     tableGroup.add(leg);
   }
-  // 桌布：頂布 + 四邊裙擺（下擺長度由 state.scene.clothDrop 決定，不超過桌高）
+  // 桌布：頂布 + 四邊裙擺（下擺長度由 state.scene.clothDrop 決定，不超過桌高；clothOn 關閉時裸桌不建桌布）
+  if (state.scene.clothOn === false) return;
   const clothMat = new THREE.MeshLambertMaterial({ color: state.scene.clothColor });
   const cloth = new THREE.Mesh(new THREE.BoxGeometry(w + 4, 0.5, d + 4), clothMat);
   cloth.position.y = h + 0.25;
@@ -1034,7 +1073,9 @@ function build3dItems(elevations) {
     }
     const z = elevations.get(p.id) || 0;
     // 2D 的 (cx, cy) 對應 3D 的 (x, z)；2D 原點在桌面左上角，3D 桌面中心在原點；z 為堆疊高度
-    g.position.set(p.cx - w / 2, h + 0.5 + z, p.cy - d / 2);
+    // 桌布開啟時物件墊在桌布頂面（+0.5），關閉時直接放在桌板頂面
+    const clothOffset = state.scene.clothOn === false ? 0 : 0.5;
+    g.position.set(p.cx - w / 2, h + clothOffset + z, p.cy - d / 2);
     g.rotation.y = -p.rot * Math.PI / 180;
     itemGroup.add(g);
   }

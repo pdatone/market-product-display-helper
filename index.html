@@ -107,11 +107,13 @@
   .lib-item .meta { flex: 1; min-width: 0; }
   .lib-item .meta .name { font-size: 13px; }
   .lib-item .meta .dims { font-size: 11px; color: var(--muted); }
-  .lib-item .del {
+  .lib-item .del, .lib-item .edit {
     border: none; background: none; color: var(--muted);
     font-size: 14px; padding: 2px 4px;
   }
   .lib-item .del:hover { color: var(--danger); background: none; }
+  .lib-item .edit:hover { color: var(--accent); background: none; }
+  .lib-item.editing { background: var(--accent-soft); border-radius: 6px; }
   #newItemForm { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
   #newItemForm .dims-row { display: flex; gap: 4px; }
   #newItemForm .dims-row input { width: 100%; }
@@ -196,7 +198,10 @@
           <label>層數</label><input type="number" id="niTiers" value="3" min="2" max="8" step="1">
         </div>
         <div class="field-row"><label>顏色</label><input type="color" id="niColor" value="#8ba28a"></div>
-        <button id="addLibItem" style="width:100%">＋ 新增到物件庫</button>
+        <div style="display:flex; gap:6px;">
+          <button id="addLibItem" style="flex:1">＋ 新增到物件庫</button>
+          <button id="cancelEdit" style="display:none">取消</button>
+        </div>
       </div>
     </section>
     <section>
@@ -263,6 +268,7 @@ const DEFAULT_STATE = {
 
 let state = loadState();
 let selectedId = null;
+let editingItemId = null; // 目前正在編輯的物件庫項目 id（null = 新增模式）
 
 function loadState() {
   let s = null;
@@ -656,7 +662,7 @@ function renderSidebar() {
   list.innerHTML = '';
   for (const it of state.library) {
     const row = document.createElement('div');
-    row.className = 'lib-item';
+    row.className = 'lib-item' + (it.id === editingItemId ? ' editing' : '');
     row.innerHTML = `
       <span class="chip" style="background:${it.color}"></span>
       <span class="meta">
@@ -664,6 +670,7 @@ function renderSidebar() {
         <div class="dims">寬${it.w}×高${it.h}×深${it.d} cm${it.shape === 'steps' ? `・階梯${it.tiers || 3}層` : it.shape === 'pegboard' ? '・洞洞板' : ''}</div>
       </span>
       <button data-add="${it.id}">加入</button>
+      <button class="edit" data-edit="${it.id}" title="編輯物件">✎</button>
       <button class="del" data-del="${it.id}" title="從物件庫移除">✕</button>`;
     list.appendChild(row);
   }
@@ -674,10 +681,13 @@ function escapeHtml(s) {
 
 document.getElementById('libList').addEventListener('click', (evt) => {
   const add = evt.target.dataset.add;
+  const edit = evt.target.dataset.edit;
   const del = evt.target.dataset.del;
   if (add) addToTable(Number(add));
+  if (edit) enterEditMode(Number(edit));
   if (del) {
     const id = Number(del);
+    if (id === editingItemId) exitEditMode();
     state.library = state.library.filter(i => i.id !== id);
     state.placed = state.placed.filter(p => p.itemId !== id);
     if (selectedId != null && !state.placed.some(p => p.id === selectedId)) select(null);
@@ -721,6 +731,51 @@ document.getElementById('applyTable').addEventListener('click', () => {
   }
 });
 
+/* 依形狀切換表單相依 UI：層數列顯隱、深度欄位鎖定（洞洞板固定深 2cm） */
+function syncShapeUI(shape) {
+  document.getElementById('niTiersRow').style.display = shape === 'steps' ? 'flex' : 'none';
+  const niD = document.getElementById('niD');
+  if (shape === 'pegboard') { niD.value = 2; niD.disabled = true; }
+  else { niD.disabled = false; }
+}
+
+/* 進入編輯模式：把該物件庫項目的資料填入表單，切換按鈕文字與取消鈕 */
+function enterEditMode(id) {
+  const it = libItem(id);
+  if (!it) return;
+  editingItemId = id;
+  document.getElementById('niName').value = it.name;
+  document.getElementById('niW').value = it.w;
+  document.getElementById('niH').value = it.h;
+  document.getElementById('niD').value = it.d;
+  document.getElementById('niColor').value = it.color;
+  const shape = it.shape || 'box';
+  document.getElementById('niShape').value = shape;
+  document.getElementById('niTiers').value = it.tiers || 3;
+  syncShapeUI(shape);
+  document.getElementById('addLibItem').textContent = '儲存修改';
+  document.getElementById('cancelEdit').style.display = '';
+  renderSidebar();
+}
+
+/* 離開編輯模式：清空表單、還原新增模式的預設值與按鈕文字 */
+function exitEditMode() {
+  editingItemId = null;
+  document.getElementById('niName').value = '';
+  document.getElementById('niW').value = '';
+  document.getElementById('niH').value = '';
+  document.getElementById('niD').value = '';
+  document.getElementById('niShape').value = 'box';
+  document.getElementById('niTiers').value = 3;
+  document.getElementById('niColor').value = '#8ba28a';
+  syncShapeUI('box');
+  document.getElementById('addLibItem').textContent = '＋ 新增到物件庫';
+  document.getElementById('cancelEdit').style.display = 'none';
+  renderSidebar();
+}
+
+document.getElementById('cancelEdit').addEventListener('click', exitEditMode);
+
 document.getElementById('addLibItem').addEventListener('click', () => {
   const name = document.getElementById('niName').value.trim();
   const shape = document.getElementById('niShape').value;
@@ -733,13 +788,25 @@ document.getElementById('addLibItem').addEventListener('click', () => {
     return;
   }
   const tiers = Math.max(2, Math.min(8, Number(document.getElementById('niTiers').value) || 3));
+  if (editingItemId != null) {
+    // 編輯模式：就地更新既有物件庫項目（保留 id），桌面上參照它的擺放物立即隨之改變
+    const it = state.library.find(i => i.id === editingItemId);
+    if (it) {
+      it.name = name; it.w = w; it.h = h; it.d = d; it.color = color;
+      if (shape !== 'box') it.shape = shape; else delete it.shape;
+      if (shape === 'steps') it.tiers = tiers; else delete it.tiers;
+    }
+    exitEditMode();
+    saveState(); update();
+    return;
+  }
   state.library.push({
     id: state.nextId++, name, w, d, h, color,
     ...(shape !== 'box' ? { shape } : {}),
     ...(shape === 'steps' ? { tiers } : {}),
   });
-  document.getElementById('niName').value = '';
-  saveState(); renderSidebar();
+  exitEditMode();
+  saveState();
 });
 
 document.getElementById('clearTable').addEventListener('click', () => {
@@ -751,12 +818,7 @@ document.getElementById('clearTable').addEventListener('click', () => {
 
 document.getElementById('snapSel').addEventListener('change', () => {});
 document.getElementById('niShape').addEventListener('change', (evt) => {
-  const shape = evt.target.value;
-  document.getElementById('niTiersRow').style.display = shape === 'steps' ? 'flex' : 'none';
-  // 洞洞板深度固定為板厚 2cm，不開放修改
-  const niD = document.getElementById('niD');
-  if (shape === 'pegboard') { niD.value = 2; niD.disabled = true; }
-  else { niD.disabled = false; }
+  syncShapeUI(evt.target.value);
 });
 
 function renderStats(elevations) {

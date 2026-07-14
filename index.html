@@ -218,6 +218,9 @@
           <option value="5" selected>5 cm</option>
         </select>
         <div id="toolbar2d">
+          <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px;">角度
+            <input type="number" id="rotInput" min="0" max="359" step="1" style="width:60px; font-family:inherit; font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;" disabled>
+          </label>
           <button id="btnRotate" disabled>旋轉 90°（R）</button>
           <button id="btnDup" disabled>複製（D）</button>
           <button id="btnDel" disabled>刪除（Del）</button>
@@ -254,7 +257,7 @@ const DEFAULT_STATE = {
     { id: 6, name: '階梯展示架', w: 40, d: 30, h: 24, color: '#8f9377', shape: 'steps', tiers: 3 },
     { id: 7, name: '洞洞板',   w: 60, d: 2, h: 60, color: '#c5c9ad', shape: 'pegboard' },
   ],
-  placed: [],   // { id, itemId, cx, cy, rot }  cx/cy = 中心點（cm），rot = 0|90|180|270
+  placed: [],   // { id, itemId, cx, cy, rot }  cx/cy = 中心點（cm），rot = 任意角度（度，0–360，浮點數）
   nextId: 100,
 };
 
@@ -293,31 +296,116 @@ function saveState() {
 
 function libItem(itemId) { return state.library.find(i => i.id === itemId); }
 
-/* 物件在桌面上的實際佔位（考慮旋轉後的外框） */
-function footprint(p) {
+/* 物件四個角（考慮任意角度旋轉）的世界座標，順序：左上、右上、右下、左下（局部座標系） */
+function cornersOf(p) {
   const it = libItem(p.itemId);
-  const swap = p.rot % 180 !== 0;
-  const fw = swap ? it.d : it.w;
-  const fd = swap ? it.w : it.d;
-  return { x: p.cx - fw / 2, y: p.cy - fd / 2, w: fw, d: fd };
+  const hw = it.w / 2, hd = it.d / 2;
+  const th = p.rot * Math.PI / 180;
+  const cos = Math.cos(th), sin = Math.sin(th);
+  const local = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]];
+  return local.map(([x, y]) => ({
+    x: p.cx + x * cos - y * sin,
+    y: p.cy + x * sin + y * cos,
+  }));
 }
-function overlaps(a, b) {
+/* 物件在桌面上的軸對齊外框（AABB，供 label 字級估算、加入桌面找位置等用途） */
+function footprint(p) {
+  const c = cornersOf(p);
+  const xs = c.map(pt => pt.x), ys = c.map(pt => pt.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  return { x: minX, y: minY, w: maxX - minX, d: maxY - minY };
+}
+/* SAT（分離軸定理）矩形重疊判斷，傳入兩組已旋轉好的世界座標角點 */
+function satOverlap(cornersA, cornersB) {
   const EPS = 0.01;
-  return a.x + a.w > b.x + EPS && b.x + b.w > a.x + EPS &&
-         a.y + a.d > b.y + EPS && b.y + b.d > a.y + EPS;
+  for (const corners of [cornersA, cornersB]) {
+    for (let i = 0; i < 4; i++) {
+      const p1 = corners[i], p2 = corners[(i + 1) % 4];
+      const ex = p2.x - p1.x, ey = p2.y - p1.y;
+      const len = Math.hypot(ex, ey) || 1;
+      const ax = -ey / len, ay = ex / len; // 邊的法向量（分離軸）
+      let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+      for (const pt of cornersA) { const proj = pt.x * ax + pt.y * ay; if (proj < minA) minA = proj; if (proj > maxA) maxA = proj; }
+      for (const pt of cornersB) { const proj = pt.x * ax + pt.y * ay; if (proj < minB) minB = proj; if (proj > maxB) maxB = proj; }
+      if (maxA <= minB + EPS || maxB <= minA + EPS) return false; // 這條軸上有間隙，兩矩形不重疊
+    }
+  }
+  return true;
 }
-function outOfBounds(f) {
-  return f.x < -0.01 || f.y < -0.01 ||
-         f.x + f.w > state.table.w + 0.01 || f.y + f.d > state.table.d + 0.01;
+/* 是否超出桌面：四個角必須都落在 [0,w]x[0,d] 內（留一點 epsilon） */
+function outOfBounds(p) {
+  const EPS = 0.01;
+  return cornersOf(p).some(pt =>
+    pt.x < -EPS || pt.y < -EPS || pt.x > state.table.w + EPS || pt.y > state.table.d + EPS);
 }
 function computeConflicts() {
+  // 重疊不再算衝突（改由自動堆疊處理），只回報超出桌面的物件
   const bad = new Set();
-  const fps = state.placed.map(p => ({ p, f: footprint(p) }));
-  for (const { p, f } of fps) if (outOfBounds(f)) bad.add(p.id);
-  for (let i = 0; i < fps.length; i++)
-    for (let j = i + 1; j < fps.length; j++)
-      if (overlaps(fps[i].f, fps[j].f)) { bad.add(fps[i].p.id); bad.add(fps[j].p.id); }
+  for (const p of state.placed) if (outOfBounds(p)) bad.add(p.id);
   return bad;
+}
+
+/* 物件足跡的取樣點（4 角 + 4 邊中點 + 中心，共 9 點），世界座標 */
+function sampleFootprintPoints(p, it) {
+  const hw = it.w / 2, hd = it.d / 2;
+  const local = [
+    [-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd],
+    [0, -hd], [0, hd], [-hw, 0], [hw, 0],
+    [0, 0],
+  ];
+  const th = p.rot * Math.PI / 180;
+  const cos = Math.cos(th), sin = Math.sin(th);
+  return local.map(([x, y]) => ({
+    x: p.cx + x * cos - y * sin,
+    y: p.cy + x * sin + y * cos,
+  }));
+}
+/* 世界座標點在物件 pj（含旋轉）局部座標下的頂面高度；超出 pj 的 w×d 範圍回傳 null */
+function supportTop(pj, itj, worldPoint) {
+  const dx = worldPoint.x - pj.cx, dy = worldPoint.y - pj.cy;
+  const th = -pj.rot * Math.PI / 180; // 逆旋轉，轉回局部座標
+  const cos = Math.cos(th), sin = Math.sin(th);
+  const lx = dx * cos - dy * sin;
+  const ly = dx * sin + dy * cos;
+  const EPS = 0.01;
+  if (lx < -itj.w / 2 - EPS || lx > itj.w / 2 + EPS || ly < -itj.d / 2 - EPS || ly > itj.d / 2 + EPS) return null;
+  if (itj.shape === 'steps') {
+    // 階梯：局部 -d 側（後排）最高，跟 2D/3D 繪製方向一致
+    const n = itj.tiers || 3;
+    const idx = Math.min(n - 1, Math.max(0, Math.floor((ly + itj.d / 2) / (itj.d / n))));
+    return itj.h * (n - idx) / n;
+  }
+  return itj.h; // 一般方塊、洞洞板都是整塊高度
+}
+/* 依 state.placed 陣列順序（即堆疊優先序）計算每個物件底部離桌面的高度（cm），不落地存檔 */
+function computeElevations() {
+  const elev = new Map();
+  const placed = state.placed;
+  for (let i = 0; i < placed.length; i++) {
+    const pi = placed[i];
+    const iti = libItem(pi.itemId);
+    if (!iti) { elev.set(pi.id, 0); continue; }
+    const ci = cornersOf(pi);
+    const samples = sampleFootprintPoints(pi, iti);
+    let z = 0;
+    for (let j = 0; j < i; j++) {
+      const pj = placed[j];
+      const itj = libItem(pj.itemId);
+      if (!itj) continue;
+      if (!satOverlap(ci, cornersOf(pj))) continue;
+      const zj = elev.get(pj.id) || 0;
+      let top = null;
+      for (const pt of samples) {
+        const h = supportTop(pj, itj, pt);
+        if (h != null) top = top == null ? h : Math.max(top, h);
+      }
+      if (top == null) top = itj.h; // SAT 判定重疊但 9 個取樣點都不在 j 內（小面積邊角交疊），退而用最高層高度
+      z = Math.max(z, zj + top);
+    }
+    elev.set(pi.id, z);
+  }
+  return elev;
 }
 
 /* ================= 2D editor (SVG) ================= */
@@ -330,7 +418,7 @@ function svgPoint(evt) {
   return pt.matrixTransform(svg.getScreenCTM().inverse());
 }
 
-function render2d() {
+function render2d(elevations) {
   const { w, d } = state.table;
   svg.setAttribute('viewBox', `${-PAD} ${-PAD} ${w + PAD * 2} ${d + PAD * 2}`);
   svg.innerHTML = '';
@@ -381,6 +469,15 @@ function render2d() {
         }));
       }
     }
+    // 選取時顯示旋轉把手：局部座標 (0, -d/2-6) 處的小圓，跟著物件一起旋轉
+    const handleR = 2.5;
+    const hy = -it.d / 2 - 6;
+    if (sel) {
+      local.appendChild(el('line', { x1: 0, y1: 0, x2: 0, y2: hy, stroke: '#39423a', 'stroke-width': 0.4, 'stroke-dasharray': '1.2 1' }));
+      const handle = el('circle', { cx: 0, cy: hy, r: handleR, fill: '#fff', stroke: '#39423a', 'stroke-width': 0.6, cursor: 'grab', class: 'rot-handle' });
+      handle.dataset.id = p.id;
+      local.appendChild(handle);
+    }
     g.appendChild(local);
     // 名稱（放得下才顯示）
     const fontSize = Math.min(4, f.w / (it.name.length + 1) * 1.6, f.d * 0.5);
@@ -389,6 +486,29 @@ function render2d() {
       label.setAttribute('fill', '#fff');
       label.setAttribute('style', 'paint-order:stroke; stroke:rgba(0,0,0,.4); stroke-width:0.4px;');
       g.appendChild(label);
+    }
+    // 堆疊高度標籤（z > 0 才顯示），放在名稱下方，不隨物件旋轉
+    const z = elevations ? (elevations.get(p.id) || 0) : 0;
+    if (z > 0.001) {
+      const zr = Math.round(z * 10) / 10;
+      const zStr = Number.isInteger(zr) ? String(zr) : zr.toFixed(1);
+      const zLabel = txt(p.cx, p.cy + 4, `↑${zStr}cm`, 3);
+      zLabel.setAttribute('fill', '#39423a');
+      zLabel.setAttribute('font-weight', '600');
+      zLabel.setAttribute('style', 'paint-order:stroke; stroke:#fff; stroke-width:0.6px;');
+      g.appendChild(zLabel);
+    }
+    // 拖曳旋轉把手中顯示目前角度（不隨物件旋轉，維持水平好讀）
+    if (rotateDrag && rotateDrag.id === p.id) {
+      const th = p.rot * Math.PI / 180;
+      const lx = handleR + 5, ly = hy;
+      const wx = p.cx + lx * Math.cos(th) - ly * Math.sin(th);
+      const wy = p.cy + lx * Math.sin(th) + ly * Math.cos(th);
+      const angLabel = txt(wx, wy, `${Math.round(p.rot)}°`, 4);
+      angLabel.setAttribute('text-anchor', 'start');
+      angLabel.setAttribute('fill', '#39423a');
+      angLabel.setAttribute('style', 'paint-order:stroke; stroke:#fff; stroke-width:0.6px;');
+      g.appendChild(angLabel);
     }
     svg.appendChild(g);
   }
@@ -405,12 +525,30 @@ function txt(x, y, s, size) {
   return t;
 }
 
-/* --- drag --- */
+/* --- drag（移動 + 旋轉把手） --- */
 let drag = null;
+let rotateDrag = null;
 svg.addEventListener('pointerdown', (evt) => {
+  const handle = evt.target.closest('.rot-handle');
+  if (handle) {
+    evt.stopPropagation();
+    const id = Number(handle.dataset.id);
+    const p = state.placed.find(q => q.id === id);
+    if (!p) return;
+    rotateDrag = { id };
+    svg.setPointerCapture(evt.pointerId);
+    return;
+  }
   const g = evt.target.closest('g[data-id]');
   if (!g) { select(null); return; }
   const id = Number(g.dataset.id);
+  // 開始拖曳移動時，把該物件移到陣列尾端（提升堆疊優先序，疊在其他物件上方）
+  const idx = state.placed.findIndex(q => q.id === id);
+  if (idx !== -1 && idx !== state.placed.length - 1) {
+    const [item] = state.placed.splice(idx, 1);
+    state.placed.push(item);
+    saveState();
+  }
   select(id);
   const p = state.placed.find(q => q.id === id);
   const pt = svgPoint(evt);
@@ -418,6 +556,19 @@ svg.addEventListener('pointerdown', (evt) => {
   svg.setPointerCapture(evt.pointerId);
 });
 svg.addEventListener('pointermove', (evt) => {
+  if (rotateDrag) {
+    const p = state.placed.find(q => q.id === rotateDrag.id);
+    if (!p) return;
+    const pt = svgPoint(evt);
+    const dx = pt.x - p.cx, dy = pt.y - p.cy;
+    // 把手在 rot=0 時指向正上方（局部 -y），依滑鼠相對中心角度即時算出 rot
+    let angle = Math.atan2(dx, -dy) * 180 / Math.PI;
+    const snapDeg = evt.shiftKey ? 1 : 15;
+    angle = Math.round(angle / snapDeg) * snapDeg;
+    p.rot = ((angle % 360) + 360) % 360;
+    update();
+    return;
+  }
   if (!drag) return;
   const p = state.placed.find(q => q.id === drag.id);
   if (!p) return;
@@ -430,7 +581,9 @@ svg.addEventListener('pointermove', (evt) => {
 });
 svg.addEventListener('pointerup', () => {
   if (drag && drag.moved) saveState();
+  if (rotateDrag) saveState();
   drag = null;
+  rotateDrag = null;
 });
 
 function select(id) {
@@ -440,6 +593,18 @@ function select(id) {
   document.getElementById('btnDup').disabled = !has;
   document.getElementById('btnDel').disabled = !has;
   update();
+}
+
+/* 讓工具列的角度輸入框跟目前選取物件同步（輸入框focus中不覆蓋，避免打斷輸入） */
+function syncRotInput() {
+  const rotInput = document.getElementById('rotInput');
+  const p = state.placed.find(q => q.id === selectedId);
+  rotInput.disabled = !p;
+  if (p && document.activeElement !== rotInput) {
+    const r = Math.round(p.rot * 10) / 10;
+    rotInput.value = Number.isInteger(r) ? r : r.toFixed(1);
+  }
+  if (!p) rotInput.value = '';
 }
 
 /* --- toolbar / keyboard --- */
@@ -465,6 +630,14 @@ function delSelected() {
 document.getElementById('btnRotate').addEventListener('click', rotateSelected);
 document.getElementById('btnDup').addEventListener('click', dupSelected);
 document.getElementById('btnDel').addEventListener('click', delSelected);
+document.getElementById('rotInput').addEventListener('input', (evt) => {
+  const p = state.placed.find(q => q.id === selectedId);
+  if (!p) return;
+  const v = Number(evt.target.value);
+  if (!Number.isFinite(v)) return;
+  p.rot = ((v % 360) + 360) % 360;
+  saveState(); update();
+});
 document.addEventListener('keydown', (evt) => {
   if (evt.target.matches('input, select, textarea')) return;
   if (selectedId == null) return;
@@ -512,12 +685,12 @@ document.getElementById('libList').addEventListener('click', (evt) => {
   }
 });
 
-/* 加入桌面：從中心往外找一個不重疊的位置 */
+/* 加入桌面：從中心往外找一個跟現有「桌面上」物件（z===0）不重疊的位置，rot 固定 0 */
 function addToTable(itemId) {
-  const it = libItem(itemId);
   const snap = 5;
   const cand = { id: state.nextId++, itemId, cx: 0, cy: 0, rot: 0 };
-  const others = state.placed.map(footprint);
+  const elev = computeElevations();
+  const groundOthers = state.placed.filter(p => (elev.get(p.id) || 0) < 0.001);
   const cx0 = Math.round(state.table.w / 2 / snap) * snap;
   const cy0 = Math.round(state.table.d / 2 / snap) * snap;
   outer:
@@ -527,12 +700,11 @@ function addToTable(itemId) {
         if (Math.max(Math.abs(ox), Math.abs(oy)) !== ring) continue;
         cand.cx = cx0 + ox * snap;
         cand.cy = cy0 + oy * snap;
-        const f = footprint(cand);
-        if (outOfBounds(f)) continue;
-        if (!others.some(o => overlaps(o, f))) break outer;
+        if (outOfBounds(cand)) continue;
+        if (!groundOthers.some(o => satOverlap(cornersOf(o), cornersOf(cand)))) break outer;
       }
     }
-    if (ring === 29) { cand.cx = cx0; cand.cy = cy0; } // 找不到就疊在中間（會顯示紅色）
+    if (ring === 29) { cand.cx = cx0; cand.cy = cy0; } // 找不到空位就放桌面中心，會自動疊到最上層
   }
   state.placed.push(cand);
   selectedId = cand.id;
@@ -587,16 +759,21 @@ document.getElementById('niShape').addEventListener('change', (evt) => {
   else { niD.disabled = false; }
 });
 
-function renderStats() {
+function renderStats(elevations) {
   const area = state.table.w * state.table.d;
-  const used = state.placed.reduce((s, p) => { const f = footprint(p); return s + f.w * f.d; }, 0);
+  // 佔用比例只計算貼在桌面上（z===0）的物件，面積用物件原始 w×d（不用外框 AABB）
+  const used = state.placed.reduce((s, p) => {
+    if ((elevations.get(p.id) || 0) > 0.001) return s;
+    const it = libItem(p.itemId);
+    return it ? s + it.w * it.d : s;
+  }, 0);
   const pct = area ? Math.round(used / area * 100) : 0;
   const conflicts = computeConflicts();
   document.getElementById('stats').innerHTML = `
     桌面面積：<b>${area.toLocaleString()} cm²</b><br>
     已擺物件：<b>${state.placed.length}</b> 件<br>
     佔用比例：<b>${pct}%</b><br>
-    ${conflicts.size ? `<span class="warn">⚠ ${conflicts.size} 件重疊或超出桌面</span>` : '✓ 沒有重疊或超出'}`;
+    ${conflicts.size ? `<span class="warn">⚠ ${conflicts.size} 件超出桌面</span>` : '✓ 沒有超出桌面'}`;
 }
 
 /* ================= 3D preview ================= */
@@ -652,7 +829,7 @@ function build3dTable() {
   tableGroup.add(cloth);
 }
 
-function build3dItems() {
+function build3dItems(elevations) {
   disposeGroup(itemGroup);
   const conflicts = computeConflicts();
   const { w, d, h } = state.table;
@@ -663,8 +840,9 @@ function build3dItems() {
     if (p.id === selectedId) {
       g.traverse(o => { if (o.isMesh) o.material.emissive = new THREE.Color('#3f4d3a'); });
     }
-    // 2D 的 (cx, cy) 對應 3D 的 (x, z)；2D 原點在桌面左上角，3D 桌面中心在原點
-    g.position.set(p.cx - w / 2, h + 0.5, p.cy - d / 2);
+    const z = elevations.get(p.id) || 0;
+    // 2D 的 (cx, cy) 對應 3D 的 (x, z)；2D 原點在桌面左上角，3D 桌面中心在原點；z 為堆疊高度
+    g.position.set(p.cx - w / 2, h + 0.5 + z, p.cy - d / 2);
     g.rotation.y = -p.rot * Math.PI / 180;
     itemGroup.add(g);
   }
@@ -783,11 +961,13 @@ new ResizeObserver(resize3d).observe(wrap);
 
 /* ================= main update ================= */
 function update() {
-  render2d();
-  renderStats();
+  const elevations = computeElevations(); // 每次 update 只算一次，2D / 3D / 統計共用
+  render2d(elevations);
+  renderStats(elevations);
   build3dTable();
-  build3dItems();
+  build3dItems(elevations);
   applyCamera();
+  syncRotInput();
 }
 
 renderSidebar();

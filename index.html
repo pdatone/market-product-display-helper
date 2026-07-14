@@ -292,10 +292,6 @@
       <div class="pane-head">
         <span class="title">2D 俯視圖</span>
         <div id="toolbar2d">
-          <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px;">角度
-            <input type="number" id="rotInput" min="0" max="359" step="1" style="width:60px; font-family:inherit; font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;" disabled>
-          </label>
-          <button id="btnRotate" disabled>旋轉 90°（R）</button>
           <button id="btnDup" disabled>複製（D）</button>
           <button id="btnDel" disabled>刪除（Del）</button>
         </div>
@@ -341,7 +337,7 @@ const DEFAULT_STATE = {
   ],
   placed: [],   // { id, itemId, cx, cy, rot }  cx/cy = 中心點（cm），rot = 任意角度（度，0–360，浮點數）
   nextId: 100,
-  scene: { bg: '#e2e8dc', groundColor: '#c6d1bd', clothColor: '#eef1e6', clothOn: true, clothDrop: 20, figureOn: false, figureH: 165 },
+  scene: { bg: '#e2e8dc', groundColor: '#c6d1bd', clothColor: '#eef1e6', clothOn: true, clothDrop: 20, figureOn: false, figureH: 165, figureX: null, figureY: null },
 };
 
 let state = loadState();
@@ -361,6 +357,9 @@ function loadState() {
   if (!s.scene.groundColor) s.scene.groundColor = '#' + shade(s.scene.bg, 0.85).getHexString();
   // 舊存檔沒有桌布開關時，預設為開（維持原本一定有桌布的行為）
   if (s.scene.clothOn === undefined) s.scene.clothOn = true;
+  // 舊存檔沒有人偶位置欄位時補 null（null 代表沿用預設位置）
+  if (s.scene.figureX === undefined) s.scene.figureX = null;
+  if (s.scene.figureY === undefined) s.scene.figureY = null;
   // 舊存檔沒有的新預設道具（階梯、洞洞板）補進物件庫
   for (const def of DEFAULT_STATE.library) {
     if (def.shape && !s.library.some(i => i.shape === def.shape)) {
@@ -385,6 +384,14 @@ function saveState() {
 }
 
 function libItem(itemId) { return state.library.find(i => i.id === itemId); }
+
+/* 人偶目前位置（與物件同座標系：桌面左上角為原點，cm）；figureX/Y 為 null 時使用預設站位（桌前 40cm） */
+function figurePos() {
+  return {
+    x: state.scene.figureX ?? state.table.w / 2,
+    y: state.scene.figureY ?? state.table.d + 40,
+  };
+}
 
 /* 物件四個角（考慮任意角度旋轉）的世界座標，順序：左上、右上、右下、左下（局部座標系） */
 function cornersOf(p) {
@@ -510,7 +517,15 @@ function svgPoint(evt) {
 
 function render2d(elevations) {
   const { w, d } = state.table;
-  svg.setAttribute('viewBox', `${-PAD} ${-PAD} ${w + PAD * 2} ${d + PAD * 2}`);
+  // viewBox 基礎範圍是桌子 (0,0)-(w,d)；人偶開啟時聯集擴大到含人偶位置周圍 ±25cm，最後四邊加 PAD 留白
+  let minX = 0, minY = 0, maxX = w, maxY = d;
+  if (state.scene.figureOn) {
+    const fp = figurePos();
+    minX = Math.min(minX, fp.x - 25); maxX = Math.max(maxX, fp.x + 25);
+    minY = Math.min(minY, fp.y - 25); maxY = Math.max(maxY, fp.y + 25);
+  }
+  minX -= PAD; minY -= PAD; maxX += PAD; maxY += PAD;
+  svg.setAttribute('viewBox', `${minX} ${minY} ${maxX - minX} ${maxY - minY}`);
   svg.innerHTML = '';
 
   // 桌面（桌布關閉時顯示裸桌底色，不套用桌布色）
@@ -603,6 +618,23 @@ function render2d(elevations) {
     }
     svg.appendChild(g);
   }
+
+  // 人偶圖示（畫在所有物件之後，最上層；可拖曳移動）
+  if (state.scene.figureOn) {
+    const fp = figurePos();
+    const fg = el('g', { 'data-figure': '1', cursor: 'move' });
+    fg.appendChild(el('ellipse', {
+      cx: fp.x, cy: fp.y, rx: 22, ry: 12,
+      fill: '#b8b4aa', 'fill-opacity': 0.85, stroke: 'rgba(0,0,0,.3)', 'stroke-width': 0.4,
+    }));
+    fg.appendChild(el('circle', {
+      cx: fp.x, cy: fp.y, r: 9,
+      fill: '#d8d5cf', stroke: 'rgba(0,0,0,.3)', 'stroke-width': 0.4,
+    }));
+    const fLabel = txt(fp.x, fp.y + 18, '人偶', 4);
+    fg.appendChild(fLabel);
+    svg.appendChild(fg);
+  }
 }
 
 /* 顏色往白色混合（f = 混入白色的比例，0~1），用來把桌布色淡化成桌面底色 */
@@ -622,9 +654,10 @@ function txt(x, y, s, size) {
   return t;
 }
 
-/* --- drag（移動 + 旋轉把手） --- */
+/* --- drag（移動 + 旋轉把手 + 人偶拖曳） --- */
 let drag = null;
 let rotateDrag = null;
+let figureDrag = null;
 svg.addEventListener('pointerdown', (evt) => {
   const handle = evt.target.closest('.rot-handle');
   if (handle) {
@@ -633,6 +666,14 @@ svg.addEventListener('pointerdown', (evt) => {
     const p = state.placed.find(q => q.id === id);
     if (!p) return;
     rotateDrag = { id };
+    svg.setPointerCapture(evt.pointerId);
+    return;
+  }
+  const figureG = evt.target.closest('g[data-figure]');
+  if (figureG) {
+    const fp = figurePos();
+    const pt = svgPoint(evt);
+    figureDrag = { dx: fp.x - pt.x, dy: fp.y - pt.y };
     svg.setPointerCapture(evt.pointerId);
     return;
   }
@@ -666,6 +707,14 @@ svg.addEventListener('pointermove', (evt) => {
     update();
     return;
   }
+  if (figureDrag) {
+    const pt = svgPoint(evt);
+    const snap = 1;
+    state.scene.figureX = Math.round((pt.x + figureDrag.dx) / snap) * snap;
+    state.scene.figureY = Math.round((pt.y + figureDrag.dy) / snap) * snap;
+    update();
+    return;
+  }
   if (!drag) return;
   const p = state.placed.find(q => q.id === drag.id);
   if (!p) return;
@@ -679,29 +728,18 @@ svg.addEventListener('pointermove', (evt) => {
 svg.addEventListener('pointerup', () => {
   if (drag && drag.moved) saveState();
   if (rotateDrag) saveState();
+  if (figureDrag) saveState();
   drag = null;
   rotateDrag = null;
+  figureDrag = null;
 });
 
 function select(id) {
   selectedId = id;
   const has = id != null;
-  document.getElementById('btnRotate').disabled = !has;
   document.getElementById('btnDup').disabled = !has;
   document.getElementById('btnDel').disabled = !has;
   update();
-}
-
-/* 讓工具列的角度輸入框跟目前選取物件同步（輸入框focus中不覆蓋，避免打斷輸入） */
-function syncRotInput() {
-  const rotInput = document.getElementById('rotInput');
-  const p = state.placed.find(q => q.id === selectedId);
-  rotInput.disabled = !p;
-  if (p && document.activeElement !== rotInput) {
-    const r = Math.round(p.rot * 10) / 10;
-    rotInput.value = Number.isInteger(r) ? r : r.toFixed(1);
-  }
-  if (!p) rotInput.value = '';
 }
 
 /* --- toolbar / keyboard --- */
@@ -724,17 +762,8 @@ function delSelected() {
   select(null);
   saveState();
 }
-document.getElementById('btnRotate').addEventListener('click', rotateSelected);
 document.getElementById('btnDup').addEventListener('click', dupSelected);
 document.getElementById('btnDel').addEventListener('click', delSelected);
-document.getElementById('rotInput').addEventListener('input', (evt) => {
-  const p = state.placed.find(q => q.id === selectedId);
-  if (!p) return;
-  const v = Number(evt.target.value);
-  if (!Number.isFinite(v)) return;
-  p.rot = ((v % 360) + 360) % 360;
-  saveState(); update();
-});
 document.addEventListener('keydown', (evt) => {
   if (evt.target.matches('input, select, textarea')) return;
   if (selectedId == null) return;
@@ -1081,10 +1110,12 @@ function build3dItems(elevations) {
   }
 }
 
-/* 素描木人偶（artist mannequin），比例依 state.scene.figureH 換算，位置固定站在桌前 40cm 的地面上 */
+/* 素描木人偶（artist mannequin），比例依 state.scene.figureH 換算，位置依 figurePos()（可在 2D 圖拖曳，預設站在桌前 40cm） */
 function buildFigure() {
   disposeGroup(figureGroup);
-  figureGroup.position.set(0, 0, state.table.d / 2 + 40);
+  const { w, d } = state.table;
+  const p = figurePos();
+  figureGroup.position.set(p.x - w / 2, 0, p.y - d / 2);
   if (!state.scene.figureOn) return;
   const H = state.scene.figureH;
   const bodyMat = new THREE.MeshLambertMaterial({ color: '#d8d5cf' });
@@ -1451,7 +1482,6 @@ function update() {
   build3dItems(elevations);
   buildFigure();
   applyCamera();
-  syncRotInput();
 }
 
 renderSidebar();

@@ -370,6 +370,17 @@ function loadState() {
   for (const i of s.library) {
     if (i.shape === 'pegboard' && i.w === 60 && i.d === 20 && i.h === 60) i.d = 2;
   }
+  // 舊版「擺放實例縮放係數」欄位（scale）改為直接覆寫 w/d/h（0.5cm 級距），找不到對應物件庫項目就直接捨棄
+  for (const p of s.placed) {
+    if (p.scale === undefined) continue;
+    const it = s.library.find(i => i.id === p.itemId);
+    if (it) {
+      p.w = Math.round(it.w * p.scale * 2) / 2;
+      p.d = Math.round(it.d * p.scale * 2) / 2;
+      p.h = Math.round(it.h * p.scale * 2) / 2;
+    }
+    delete p.scale;
+  }
   // 舊預設配色換成莫蘭迪綠色系（使用者自選的顏色不受影響）
   const RECOLOR = {
     '#c96f4a': '#ab8b7c', '#7a9e7e': '#8ba28a', '#5f7fa8': '#7f93a3',
@@ -385,6 +396,13 @@ function saveState() {
 
 function libItem(itemId) { return state.library.find(i => i.id === itemId); }
 
+/* 取擺放實例的有效尺寸（實例覆寫優先，否則用物件庫定義） */
+function effItem(p) {
+  const it = libItem(p.itemId);
+  if (!it) return null;
+  return { ...it, w: p.w ?? it.w, d: p.d ?? it.d, h: p.h ?? it.h };
+}
+
 /* 人偶目前位置（與物件同座標系：桌面左上角為原點，cm）；figureX/Y 為 null 時使用預設站位（桌前 40cm） */
 function figurePos() {
   return {
@@ -395,7 +413,7 @@ function figurePos() {
 
 /* 物件四個角（考慮任意角度旋轉）的世界座標，順序：左上、右上、右下、左下（局部座標系） */
 function cornersOf(p) {
-  const it = libItem(p.itemId);
+  const it = effItem(p);
   const hw = it.w / 2, hd = it.d / 2;
   const th = p.rot * Math.PI / 180;
   const cos = Math.cos(th), sin = Math.sin(th);
@@ -481,14 +499,14 @@ function computeElevations() {
   const placed = state.placed;
   for (let i = 0; i < placed.length; i++) {
     const pi = placed[i];
-    const iti = libItem(pi.itemId);
+    const iti = effItem(pi);
     if (!iti) { elev.set(pi.id, 0); continue; }
     const ci = cornersOf(pi);
     const samples = sampleFootprintPoints(pi, iti);
     let z = 0;
     for (let j = 0; j < i; j++) {
       const pj = placed[j];
-      const itj = libItem(pj.itemId);
+      const itj = effItem(pj);
       if (!itj) continue;
       if (!satOverlap(ci, cornersOf(pj))) continue;
       const zj = elev.get(pj.id) || 0;
@@ -548,7 +566,7 @@ function render2d(elevations) {
   const conflicts = computeConflicts();
 
   for (const p of state.placed) {
-    const it = libItem(p.itemId);
+    const it = effItem(p);
     if (!it) continue;
     const f = footprint(p);
     const g = el('g', { 'data-id': p.id, cursor: 'move' });
@@ -616,6 +634,15 @@ function render2d(elevations) {
       angLabel.setAttribute('style', 'paint-order:stroke; stroke:#fff; stroke-width:0.6px;');
       g.appendChild(angLabel);
     }
+    // 雙指縮放中即時顯示尺寸（寬×深 cm），放在名稱／堆疊標籤下方，不隨物件旋轉
+    if (pinchingId === p.id) {
+      const dimStr = `${fmtDim(it.w)}×${fmtDim(it.d)} cm`;
+      const dimLabel = txt(p.cx, p.cy + (z > 0.001 ? 8 : 4), dimStr, 3);
+      dimLabel.setAttribute('fill', '#39423a');
+      dimLabel.setAttribute('font-weight', '600');
+      dimLabel.setAttribute('style', 'paint-order:stroke; stroke:#fff; stroke-width:0.6px;');
+      g.appendChild(dimLabel);
+    }
     svg.appendChild(g);
   }
 
@@ -653,12 +680,46 @@ function txt(x, y, s, size) {
   t.textContent = s;
   return t;
 }
+/* 尺寸數字格式化：四捨五入到 0.1，整數不帶小數位 */
+function fmtDim(n) {
+  const r = Math.round(n * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
 
 /* --- drag（移動 + 旋轉把手 + 人偶拖曳） --- */
 let drag = null;
 let rotateDrag = null;
 let figureDrag = null;
+/* --- 雙指縮放（pinch）：僅在選取某物件時，等比調整該擺放實例的大小，不影響物件庫原始尺寸與其他實例 --- */
+const svgPointers = new Map(); // pointerId -> { x, y }（client 座標，僅用來算兩指距離）
+let pinchResize = null; // { id, startDist, startW, startD, startH }
+let pinchingId = null; // 目前正在 pinch 縮放中的物件 id（供 render2d 顯示即時尺寸）
+let pendingDeselect = false; // 空白處按下時先掛起，放開時仍是單指才真正取消選取
 svg.addEventListener('pointerdown', (evt) => {
+  svgPointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+  if (svgPointers.size >= 2) {
+    // 兩指以上一律視為縮放手勢，取消進行中的單指拖曳／旋轉／人偶拖曳
+    drag = null; rotateDrag = null; figureDrag = null;
+    pendingDeselect = false;
+    if (svgPointers.size === 2 && selectedId != null) {
+      const p = state.placed.find(q => q.id === selectedId);
+      if (p) {
+        const it = effItem(p);
+        const pts = [...svgPointers.values()];
+        pinchResize = {
+          id: p.id,
+          startDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+          startW: it.w,
+          startD: it.d,
+          startH: it.h,
+        };
+        pinchingId = p.id;
+      }
+    }
+    svg.setPointerCapture(evt.pointerId);
+    evt.preventDefault();
+    return;
+  }
   const handle = evt.target.closest('.rot-handle');
   if (handle) {
     evt.stopPropagation();
@@ -678,7 +739,11 @@ svg.addEventListener('pointerdown', (evt) => {
     return;
   }
   const g = evt.target.closest('g[data-id]');
-  if (!g) { select(null); return; }
+  if (!g) {
+    // 空白處按下不立刻取消選取：第二指可能接著落下要做兩指縮放
+    pendingDeselect = true;
+    return;
+  }
   const id = Number(g.dataset.id);
   // 開始拖曳移動時，把該物件移到陣列尾端（提升堆疊優先序，疊在其他物件上方）
   const idx = state.placed.findIndex(q => q.id === id);
@@ -694,6 +759,28 @@ svg.addEventListener('pointerdown', (evt) => {
   svg.setPointerCapture(evt.pointerId);
 });
 svg.addEventListener('pointermove', (evt) => {
+  if (svgPointers.has(evt.pointerId)) {
+    svgPointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+  }
+  if (pinchResize) {
+    // pinch 進行中時，單指的拖曳／旋轉／人偶拖曳分支一律跳過
+    if (svgPointers.size >= 2) {
+      const p = state.placed.find(q => q.id === pinchResize.id);
+      if (p) {
+        const pts = [...svgPointers.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        if (dist > 0 && pinchResize.startDist > 0) {
+          const ratio = Math.min(4, Math.max(0.25, dist / pinchResize.startDist));
+          p.w = Math.max(0.5, Math.round(pinchResize.startW * ratio * 2) / 2);
+          p.d = Math.max(0.5, Math.round(pinchResize.startD * ratio * 2) / 2);
+          p.h = Math.max(0.5, Math.round(pinchResize.startH * ratio * 2) / 2);
+          update();
+        }
+      }
+    }
+    evt.preventDefault();
+    return;
+  }
   if (rotateDrag) {
     const p = state.placed.find(q => q.id === rotateDrag.id);
     if (!p) return;
@@ -725,14 +812,27 @@ svg.addEventListener('pointermove', (evt) => {
   drag.moved = true;
   update();
 });
-svg.addEventListener('pointerup', () => {
+function endSvgPointer(evt) {
+  svgPointers.delete(evt.pointerId);
+  if (pendingDeselect && svgPointers.size === 0) {
+    pendingDeselect = false;
+    select(null);
+  }
+  if (pinchResize && svgPointers.size < 2) {
+    pinchResize = null;
+    pinchingId = null;
+    saveState();
+    update();
+  }
   if (drag && drag.moved) saveState();
   if (rotateDrag) saveState();
   if (figureDrag) saveState();
   drag = null;
   rotateDrag = null;
   figureDrag = null;
-});
+}
+svg.addEventListener('pointerup', endSvgPointer);
+svg.addEventListener('pointercancel', endSvgPointer);
 
 function select(id) {
   selectedId = id;
@@ -992,10 +1092,10 @@ document.getElementById('niShape').addEventListener('change', (evt) => {
 
 function renderStats(elevations) {
   const area = state.table.w * state.table.d;
-  // 佔用比例只計算貼在桌面上（z===0）的物件，面積用物件原始 w×d（不用外框 AABB）
+  // 佔用比例只計算貼在桌面上（z===0）的物件，面積用該擺放實例的有效 w×d（含縮放，不用外框 AABB）
   const used = state.placed.reduce((s, p) => {
     if ((elevations.get(p.id) || 0) > 0.001) return s;
-    const it = libItem(p.itemId);
+    const it = effItem(p);
     return it ? s + it.w * it.d : s;
   }, 0);
   const pct = area ? Math.round(used / area * 100) : 0;
@@ -1094,7 +1194,7 @@ function build3dItems(elevations) {
   const conflicts = computeConflicts();
   const { w, d, h } = state.table;
   for (const p of state.placed) {
-    const it = libItem(p.itemId);
+    const it = effItem(p);
     if (!it) continue;
     const g = buildItemGroup(it, conflicts.has(p.id));
     if (p.id === selectedId) {

@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>市集擺攤陳列模擬器</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧱</text></svg>">
+<style>
+  :root {
+    --bg: #e7ece3;
+    --panel: #f5f7f2;
+    --ink: #39423a;
+    --muted: #7d8a7c;
+    --line: #d3dccd;
+    --accent: #7f9b78;
+    --accent-soft: #dfe8da;
+    --danger: #b05d54;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    flex: none;
+  }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: 1px; }
+  header .hint { font-size: 12px; color: var(--muted); }
+  main {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  /* ---- sidebar ---- */
+  #sidebar {
+    width: 250px;
+    flex: none;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+    padding: 14px;
+  }
+  #sidebar h2 {
+    font-size: 13px;
+    margin: 4px 0 8px;
+    color: var(--muted);
+    font-weight: 600;
+    letter-spacing: 1px;
+  }
+  #sidebar section { margin-bottom: 22px; }
+  .field-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .field-row label { font-size: 12px; color: var(--muted); width: 34px; flex: none; }
+  .field-row input[type=number] {
+    width: 100%;
+    padding: 5px 6px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .field-row input[type=number]:disabled {
+    background: #e8ede2;
+    color: var(--muted);
+  }
+  .field-row input[type=text] {
+    width: 100%;
+    padding: 5px 6px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  button {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #faf8f4;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-soft); border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { filter: brightness(1.06); }
+  button:disabled { opacity: .4; cursor: default; pointer-events: none; }
+  .lib-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .lib-item .chip {
+    width: 16px; height: 16px; border-radius: 4px; flex: none;
+    border: 1px solid rgba(0,0,0,.15);
+  }
+  .lib-item .meta { flex: 1; min-width: 0; }
+  .lib-item .meta .name { font-size: 13px; }
+  .lib-item .meta .dims { font-size: 11px; color: var(--muted); }
+  .lib-item .del {
+    border: none; background: none; color: var(--muted);
+    font-size: 14px; padding: 2px 4px;
+  }
+  .lib-item .del:hover { color: var(--danger); background: none; }
+  #newItemForm { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  #newItemForm .dims-row { display: flex; gap: 4px; }
+  #newItemForm .dims-row input { width: 100%; }
+  #newItemForm input[type=color] {
+    width: 100%; height: 30px; padding: 2px; border: 1px solid var(--line);
+    border-radius: 6px; background: #fff;
+  }
+  .stats { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .stats b { color: var(--ink); }
+  .stats .warn { color: var(--danger); font-weight: 600; }
+  /* ---- workspace ---- */
+  #workspace {
+    flex: 1;
+    display: flex;
+    min-width: 0;
+  }
+  .pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .pane + .pane { border-left: 1px solid var(--line); }
+  .pane .pane-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  .pane .pane-head .title { font-weight: 600; letter-spacing: 1px; }
+  .pane .pane-body { flex: 1; min-height: 0; position: relative; }
+  #svg2d { width: 100%; height: 100%; display: block; touch-action: none; }
+  #canvas3dWrap { width: 100%; height: 100%; }
+  #canvas3dWrap canvas { display: block; }
+  #toolbar2d { margin-left: auto; display: flex; gap: 6px; }
+  select {
+    font-family: inherit; font-size: 12px; padding: 4px 6px;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff;
+  }
+  .kbd-hint { font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧱 市集擺攤陳列模擬器</h1>
+  <span class="hint">左側建立物件 → 加入桌面 → 在 2D 圖拖曳擺放，右側同步 3D 預覽（拖曳旋轉視角、滾輪縮放）</span>
+</header>
+<main>
+  <div id="sidebar">
+    <section>
+      <h2>桌子尺寸（cm）</h2>
+      <div class="field-row"><label>寬</label><input type="number" id="tableW" min="20" max="600" step="1"></div>
+      <div class="field-row"><label>深</label><input type="number" id="tableD" min="20" max="300" step="1"></div>
+      <div class="field-row"><label>高</label><input type="number" id="tableH" min="20" max="150" step="1"></div>
+      <button class="primary" id="applyTable" style="width:100%">套用桌子尺寸</button>
+    </section>
+    <section>
+      <h2>物件庫</h2>
+      <div id="libList"></div>
+      <div id="newItemForm">
+        <div class="field-row"><label>名稱</label><input type="text" id="niName" placeholder="例：明信片架"></div>
+        <div class="field-row"><label>寬高深</label>
+          <div class="dims-row">
+            <input type="number" id="niW" placeholder="寬" min="1">
+            <input type="number" id="niH" placeholder="高" min="1">
+            <input type="number" id="niD" placeholder="深" min="1">
+          </div>
+        </div>
+        <div class="field-row"><label>形狀</label>
+          <select id="niShape" style="width:100%">
+            <option value="box">方塊</option>
+            <option value="steps">階梯展示架</option>
+            <option value="pegboard">洞洞板</option>
+          </select>
+        </div>
+        <div class="field-row" id="niTiersRow" style="display:none">
+          <label>層數</label><input type="number" id="niTiers" value="3" min="2" max="8" step="1">
+        </div>
+        <div class="field-row"><label>顏色</label><input type="color" id="niColor" value="#8ba28a"></div>
+        <button id="addLibItem" style="width:100%">＋ 新增到物件庫</button>
+      </div>
+    </section>
+    <section>
+      <h2>統計</h2>
+      <div class="stats" id="stats"></div>
+    </section>
+    <section>
+      <button id="clearTable" style="width:100%">清空桌面</button>
+    </section>
+  </div>
+
+  <div id="workspace">
+    <div class="pane">
+      <div class="pane-head">
+        <span class="title">2D 俯視圖</span>
+        <span>吸附</span>
+        <select id="snapSel">
+          <option value="1">1 cm</option>
+          <option value="5" selected>5 cm</option>
+        </select>
+        <div id="toolbar2d">
+          <button id="btnRotate" disabled>旋轉 90°（R）</button>
+          <button id="btnDup" disabled>複製（D）</button>
+          <button id="btnDel" disabled>刪除（Del）</button>
+        </div>
+      </div>
+      <div class="pane-body">
+        <svg id="svg2d" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-head">
+        <span class="title">3D 預覽</span>
+        <span class="kbd-hint">拖曳＝旋轉視角，滾輪＝縮放</span>
+      </div>
+      <div class="pane-body"><div id="canvas3dWrap"></div></div>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+import * as THREE from './vendor/three.module.js';
+
+/* ================= state ================= */
+const STORAGE_KEY = 'market-display-v1';
+
+const DEFAULT_STATE = {
+  table: { w: 180, d: 60, h: 75 },
+  library: [
+    { id: 1, name: '明信片架', w: 20, d: 15, h: 30, color: '#ab8b7c' },
+    { id: 2, name: 'A5 立牌',  w: 15, d: 8,  h: 21, color: '#8ba28a' },
+    { id: 3, name: '貼紙收納盒', w: 25, d: 18, h: 6, color: '#7f93a3' },
+    { id: 4, name: '陳列木箱', w: 30, d: 20, h: 15, color: '#a39a80' },
+    { id: 5, name: '名片座',  w: 10, d: 6,  h: 5,  color: '#9a8ca3' },
+    { id: 6, name: '階梯展示架', w: 40, d: 30, h: 24, color: '#8f9377', shape: 'steps', tiers: 3 },
+    { id: 7, name: '洞洞板',   w: 60, d: 2, h: 60, color: '#c5c9ad', shape: 'pegboard' },
+  ],
+  placed: [],   // { id, itemId, cx, cy, rot }  cx/cy = 中心點（cm），rot = 0|90|180|270
+  nextId: 100,
+};
+
+let state = loadState();
+let selectedId = null;
+
+function loadState() {
+  let s = null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) s = JSON.parse(raw);
+  } catch (e) { /* 壞資料直接重來 */ }
+  if (!s) return structuredClone(DEFAULT_STATE);
+  // 舊存檔沒有的新預設道具（階梯、洞洞板）補進物件庫
+  for (const def of DEFAULT_STATE.library) {
+    if (def.shape && !s.library.some(i => i.shape === def.shape)) {
+      s.library.push({ ...def, id: s.nextId++ });
+    }
+  }
+  // 舊版洞洞板（含支撐腳、深 20）改為只有板身
+  for (const i of s.library) {
+    if (i.shape === 'pegboard' && i.w === 60 && i.d === 20 && i.h === 60) i.d = 2;
+  }
+  // 舊預設配色換成莫蘭迪綠色系（使用者自選的顏色不受影響）
+  const RECOLOR = {
+    '#c96f4a': '#ab8b7c', '#7a9e7e': '#8ba28a', '#5f7fa8': '#7f93a3',
+    '#a8845f': '#a39a80', '#8d6fa8': '#9a8ca3', '#9a7b4f': '#8f9377',
+    '#d9c7a7': '#c5c9ad',
+  };
+  for (const i of s.library) if (RECOLOR[i.color]) i.color = RECOLOR[i.color];
+  return s;
+}
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function libItem(itemId) { return state.library.find(i => i.id === itemId); }
+
+/* 物件在桌面上的實際佔位（考慮旋轉後的外框） */
+function footprint(p) {
+  const it = libItem(p.itemId);
+  const swap = p.rot % 180 !== 0;
+  const fw = swap ? it.d : it.w;
+  const fd = swap ? it.w : it.d;
+  return { x: p.cx - fw / 2, y: p.cy - fd / 2, w: fw, d: fd };
+}
+function overlaps(a, b) {
+  const EPS = 0.01;
+  return a.x + a.w > b.x + EPS && b.x + b.w > a.x + EPS &&
+         a.y + a.d > b.y + EPS && b.y + b.d > a.y + EPS;
+}
+function outOfBounds(f) {
+  return f.x < -0.01 || f.y < -0.01 ||
+         f.x + f.w > state.table.w + 0.01 || f.y + f.d > state.table.d + 0.01;
+}
+function computeConflicts() {
+  const bad = new Set();
+  const fps = state.placed.map(p => ({ p, f: footprint(p) }));
+  for (const { p, f } of fps) if (outOfBounds(f)) bad.add(p.id);
+  for (let i = 0; i < fps.length; i++)
+    for (let j = i + 1; j < fps.length; j++)
+      if (overlaps(fps[i].f, fps[j].f)) { bad.add(fps[i].p.id); bad.add(fps[j].p.id); }
+  return bad;
+}
+
+/* ================= 2D editor (SVG) ================= */
+const svg = document.getElementById('svg2d');
+const SVGNS = 'http://www.w3.org/2000/svg';
+const PAD = 12; // viewBox 周圍留白（cm）
+
+function svgPoint(evt) {
+  const pt = new DOMPoint(evt.clientX, evt.clientY);
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+function render2d() {
+  const { w, d } = state.table;
+  svg.setAttribute('viewBox', `${-PAD} ${-PAD} ${w + PAD * 2} ${d + PAD * 2}`);
+  svg.innerHTML = '';
+
+  // 桌面
+  const tbl = el('rect', { x: 0, y: 0, width: w, height: d, fill: '#f8faf4', stroke: '#9dab94', 'stroke-width': 0.6, rx: 1 });
+  svg.appendChild(tbl);
+
+  // 格線（5cm）
+  const grid = el('g', { stroke: '#dde5d4', 'stroke-width': 0.25 });
+  for (let x = 5; x < w; x += 5) grid.appendChild(el('line', { x1: x, y1: 0, x2: x, y2: d }));
+  for (let y = 5; y < d; y += 5) grid.appendChild(el('line', { x1: 0, y1: y, x2: w, y2: y }));
+  svg.appendChild(grid);
+
+  // 尺寸標示
+  svg.appendChild(txt(w / 2, -4, `${w} cm`, 4.5));
+  const dLabel = txt(-5, d / 2, `${d} cm`, 4.5);
+  dLabel.setAttribute('transform', `rotate(-90 ${-5} ${d / 2})`);
+  svg.appendChild(dLabel);
+
+  const conflicts = computeConflicts();
+
+  for (const p of state.placed) {
+    const it = libItem(p.itemId);
+    if (!it) continue;
+    const f = footprint(p);
+    const g = el('g', { 'data-id': p.id, cursor: 'move' });
+    const bad = conflicts.has(p.id);
+    const sel = p.id === selectedId;
+    // 物件本體畫在以中心點為原點的局部座標，跟著 rot 旋轉
+    const local = el('g', { transform: `translate(${p.cx} ${p.cy}) rotate(${p.rot})` });
+    local.appendChild(el('rect', {
+      x: -it.w / 2, y: -it.d / 2, width: it.w, height: it.d, rx: 0.8,
+      fill: bad ? '#d9aca4' : it.color,
+      'fill-opacity': 0.85,
+      stroke: bad ? '#b05d54' : (sel ? '#39423a' : 'rgba(0,0,0,.35)'),
+      'stroke-width': sel ? 1 : 0.4,
+      'stroke-dasharray': sel ? '2 1.2' : 'none',
+    }));
+    if (it.shape === 'steps') {
+      // 階梯：局部 -d 側（後排）最高、顏色最深
+      const n = it.tiers || 3;
+      for (let j = 0; j < n; j++) {
+        local.appendChild(el('rect', {
+          x: -it.w / 2, y: -it.d / 2 + j * it.d / n, width: it.w, height: it.d / n,
+          fill: '#000', 'fill-opacity': (0.2 * (n - 1 - j) / (n - 1)).toFixed(2),
+          stroke: 'rgba(0,0,0,.25)', 'stroke-width': 0.2,
+        }));
+      }
+    }
+    g.appendChild(local);
+    // 名稱（放得下才顯示）
+    const fontSize = Math.min(4, f.w / (it.name.length + 1) * 1.6, f.d * 0.5);
+    if (fontSize > 2) {
+      const label = txt(p.cx, p.cy, it.name, fontSize);
+      label.setAttribute('fill', '#fff');
+      label.setAttribute('style', 'paint-order:stroke; stroke:rgba(0,0,0,.4); stroke-width:0.4px;');
+      g.appendChild(label);
+    }
+    svg.appendChild(g);
+  }
+}
+
+function el(tag, attrs) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+  return n;
+}
+function txt(x, y, s, size) {
+  const t = el('text', { x, y, 'font-size': size, 'text-anchor': 'middle', 'dominant-baseline': 'central', fill: '#7d8a7c', 'font-family': 'inherit' });
+  t.textContent = s;
+  return t;
+}
+
+/* --- drag --- */
+let drag = null;
+svg.addEventListener('pointerdown', (evt) => {
+  const g = evt.target.closest('g[data-id]');
+  if (!g) { select(null); return; }
+  const id = Number(g.dataset.id);
+  select(id);
+  const p = state.placed.find(q => q.id === id);
+  const pt = svgPoint(evt);
+  drag = { id, dx: p.cx - pt.x, dy: p.cy - pt.y, moved: false };
+  svg.setPointerCapture(evt.pointerId);
+});
+svg.addEventListener('pointermove', (evt) => {
+  if (!drag) return;
+  const p = state.placed.find(q => q.id === drag.id);
+  if (!p) return;
+  const pt = svgPoint(evt);
+  const snap = Number(document.getElementById('snapSel').value);
+  p.cx = Math.round((pt.x + drag.dx) / snap) * snap;
+  p.cy = Math.round((pt.y + drag.dy) / snap) * snap;
+  drag.moved = true;
+  update();
+});
+svg.addEventListener('pointerup', () => {
+  if (drag && drag.moved) saveState();
+  drag = null;
+});
+
+function select(id) {
+  selectedId = id;
+  const has = id != null;
+  document.getElementById('btnRotate').disabled = !has;
+  document.getElementById('btnDup').disabled = !has;
+  document.getElementById('btnDel').disabled = !has;
+  update();
+}
+
+/* --- toolbar / keyboard --- */
+function rotateSelected() {
+  const p = state.placed.find(q => q.id === selectedId);
+  if (!p) return;
+  p.rot = (p.rot + 90) % 360;
+  saveState(); update();
+}
+function dupSelected() {
+  const p = state.placed.find(q => q.id === selectedId);
+  if (!p) return;
+  const copy = { ...p, id: state.nextId++, cx: p.cx + 5, cy: p.cy + 5 };
+  state.placed.push(copy);
+  selectedId = copy.id;
+  saveState(); update();
+}
+function delSelected() {
+  state.placed = state.placed.filter(q => q.id !== selectedId);
+  select(null);
+  saveState();
+}
+document.getElementById('btnRotate').addEventListener('click', rotateSelected);
+document.getElementById('btnDup').addEventListener('click', dupSelected);
+document.getElementById('btnDel').addEventListener('click', delSelected);
+document.addEventListener('keydown', (evt) => {
+  if (evt.target.matches('input, select, textarea')) return;
+  if (selectedId == null) return;
+  if (evt.key === 'r' || evt.key === 'R') rotateSelected();
+  else if (evt.key === 'd' || evt.key === 'D') dupSelected();
+  else if (evt.key === 'Delete' || evt.key === 'Backspace') delSelected();
+});
+
+/* ================= sidebar ================= */
+function renderSidebar() {
+  document.getElementById('tableW').value = state.table.w;
+  document.getElementById('tableD').value = state.table.d;
+  document.getElementById('tableH').value = state.table.h;
+
+  const list = document.getElementById('libList');
+  list.innerHTML = '';
+  for (const it of state.library) {
+    const row = document.createElement('div');
+    row.className = 'lib-item';
+    row.innerHTML = `
+      <span class="chip" style="background:${it.color}"></span>
+      <span class="meta">
+        <div class="name">${escapeHtml(it.name)}</div>
+        <div class="dims">寬${it.w}×高${it.h}×深${it.d} cm${it.shape === 'steps' ? `・階梯${it.tiers || 3}層` : it.shape === 'pegboard' ? '・洞洞板' : ''}</div>
+      </span>
+      <button data-add="${it.id}">加入</button>
+      <button class="del" data-del="${it.id}" title="從物件庫移除">✕</button>`;
+    list.appendChild(row);
+  }
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+document.getElementById('libList').addEventListener('click', (evt) => {
+  const add = evt.target.dataset.add;
+  const del = evt.target.dataset.del;
+  if (add) addToTable(Number(add));
+  if (del) {
+    const id = Number(del);
+    state.library = state.library.filter(i => i.id !== id);
+    state.placed = state.placed.filter(p => p.itemId !== id);
+    if (selectedId != null && !state.placed.some(p => p.id === selectedId)) select(null);
+    saveState(); renderSidebar(); update();
+  }
+});
+
+/* 加入桌面：從中心往外找一個不重疊的位置 */
+function addToTable(itemId) {
+  const it = libItem(itemId);
+  const snap = 5;
+  const cand = { id: state.nextId++, itemId, cx: 0, cy: 0, rot: 0 };
+  const others = state.placed.map(footprint);
+  const cx0 = Math.round(state.table.w / 2 / snap) * snap;
+  const cy0 = Math.round(state.table.d / 2 / snap) * snap;
+  outer:
+  for (let ring = 0; ring < 30; ring++) {
+    for (let oy = -ring; oy <= ring; oy++) {
+      for (let ox = -ring; ox <= ring; ox++) {
+        if (Math.max(Math.abs(ox), Math.abs(oy)) !== ring) continue;
+        cand.cx = cx0 + ox * snap;
+        cand.cy = cy0 + oy * snap;
+        const f = footprint(cand);
+        if (outOfBounds(f)) continue;
+        if (!others.some(o => overlaps(o, f))) break outer;
+      }
+    }
+    if (ring === 29) { cand.cx = cx0; cand.cy = cy0; } // 找不到就疊在中間（會顯示紅色）
+  }
+  state.placed.push(cand);
+  selectedId = cand.id;
+  saveState(); select(cand.id);
+}
+
+document.getElementById('applyTable').addEventListener('click', () => {
+  const w = Number(document.getElementById('tableW').value);
+  const d = Number(document.getElementById('tableD').value);
+  const h = Number(document.getElementById('tableH').value);
+  if (w > 0 && d > 0 && h > 0) {
+    state.table = { w, d, h };
+    saveState(); update(); rebuild3dCamera();
+  }
+});
+
+document.getElementById('addLibItem').addEventListener('click', () => {
+  const name = document.getElementById('niName').value.trim();
+  const shape = document.getElementById('niShape').value;
+  const w = Number(document.getElementById('niW').value);
+  const h = Number(document.getElementById('niH').value);
+  const d = shape === 'pegboard' ? 2 : Number(document.getElementById('niD').value);
+  const color = document.getElementById('niColor').value;
+  if (!name || !(w > 0) || !(d > 0) || !(h > 0)) {
+    alert('請填寫名稱與寬／高／深（cm）');
+    return;
+  }
+  const tiers = Math.max(2, Math.min(8, Number(document.getElementById('niTiers').value) || 3));
+  state.library.push({
+    id: state.nextId++, name, w, d, h, color,
+    ...(shape !== 'box' ? { shape } : {}),
+    ...(shape === 'steps' ? { tiers } : {}),
+  });
+  document.getElementById('niName').value = '';
+  saveState(); renderSidebar();
+});
+
+document.getElementById('clearTable').addEventListener('click', () => {
+  if (state.placed.length && !confirm('確定清空桌面上所有物件？（物件庫會保留）')) return;
+  state.placed = [];
+  select(null);
+  saveState();
+});
+
+document.getElementById('snapSel').addEventListener('change', () => {});
+document.getElementById('niShape').addEventListener('change', (evt) => {
+  const shape = evt.target.value;
+  document.getElementById('niTiersRow').style.display = shape === 'steps' ? 'flex' : 'none';
+  // 洞洞板深度固定為板厚 2cm，不開放修改
+  const niD = document.getElementById('niD');
+  if (shape === 'pegboard') { niD.value = 2; niD.disabled = true; }
+  else { niD.disabled = false; }
+});
+
+function renderStats() {
+  const area = state.table.w * state.table.d;
+  const used = state.placed.reduce((s, p) => { const f = footprint(p); return s + f.w * f.d; }, 0);
+  const pct = area ? Math.round(used / area * 100) : 0;
+  const conflicts = computeConflicts();
+  document.getElementById('stats').innerHTML = `
+    桌面面積：<b>${area.toLocaleString()} cm²</b><br>
+    已擺物件：<b>${state.placed.length}</b> 件<br>
+    佔用比例：<b>${pct}%</b><br>
+    ${conflicts.size ? `<span class="warn">⚠ ${conflicts.size} 件重疊或超出桌面</span>` : '✓ 沒有重疊或超出'}`;
+}
+
+/* ================= 3D preview ================= */
+const wrap = document.getElementById('canvas3dWrap');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+wrap.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#e2e8dc');
+
+const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
+
+scene.add(new THREE.HemisphereLight(0xf8fbef, 0x87947e, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(150, 300, 180);
+scene.add(sun);
+
+// 地面
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(600, 48),
+  new THREE.MeshLambertMaterial({ color: '#c6d1bd' })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+let tableGroup = new THREE.Group();
+let itemGroup = new THREE.Group();
+scene.add(tableGroup, itemGroup);
+
+function build3dTable() {
+  disposeGroup(tableGroup);
+  const { w, d, h } = state.table;
+  const topMat = new THREE.MeshLambertMaterial({ color: '#b3af9b' });
+  const legMat = new THREE.MeshLambertMaterial({ color: '#7f7d6c' });
+  const topThick = 4;
+  const top = new THREE.Mesh(new THREE.BoxGeometry(w, topThick, d), topMat);
+  top.position.y = h - topThick / 2;
+  tableGroup.add(top);
+  const legSize = 5;
+  const lx = w / 2 - legSize, lz = d / 2 - legSize;
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(legSize, h - topThick, legSize), legMat);
+    leg.position.set(sx * lx, (h - topThick) / 2, sz * lz);
+    tableGroup.add(leg);
+  }
+  // 桌布感：桌面上薄薄一層
+  const cloth = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 2, 0.5, d + 2),
+    new THREE.MeshLambertMaterial({ color: '#eef1e6' })
+  );
+  cloth.position.y = h + 0.25;
+  tableGroup.add(cloth);
+}
+
+function build3dItems() {
+  disposeGroup(itemGroup);
+  const conflicts = computeConflicts();
+  const { w, d, h } = state.table;
+  for (const p of state.placed) {
+    const it = libItem(p.itemId);
+    if (!it) continue;
+    const g = buildItemGroup(it, conflicts.has(p.id));
+    if (p.id === selectedId) {
+      g.traverse(o => { if (o.isMesh) o.material.emissive = new THREE.Color('#3f4d3a'); });
+    }
+    // 2D 的 (cx, cy) 對應 3D 的 (x, z)；2D 原點在桌面左上角，3D 桌面中心在原點
+    g.position.set(p.cx - w / 2, h + 0.5, p.cy - d / 2);
+    g.rotation.y = -p.rot * Math.PI / 180;
+    itemGroup.add(g);
+  }
+}
+
+/* 依形狀組出 3D 模型（局部座標：原點在物件中心的桌面高度） */
+function buildItemGroup(it, bad) {
+  const g = new THREE.Group();
+  const color = bad ? '#b05d54' : it.color;
+  const addBox = (bw, bh, bd, x, y, z, mat) => {
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(bw, bh, bd),
+      mat || new THREE.MeshLambertMaterial({ color })
+    );
+    box.position.set(x, y, z);
+    g.add(box);
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(box.geometry),
+      new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 })
+    );
+    edges.position.copy(box.position);
+    g.add(edges);
+  };
+  if (it.shape === 'steps') {
+    // 階梯：局部 -z 側（後排）最高
+    const n = it.tiers || 3;
+    for (let j = 0; j < n; j++) {
+      const stepH = it.h * (n - j) / n;
+      const z = -it.d / 2 + (j + 0.5) * it.d / n;
+      addBox(it.w, stepH, it.d / n, 0, stepH / 2, z);
+    }
+  } else if (it.shape === 'pegboard') {
+    // 只有板身，佔位深度＝板厚
+    const mat = new THREE.MeshLambertMaterial({ color, map: bad ? null : pegboardTexture() });
+    addBox(it.w, it.h, it.d, 0, it.h / 2, 0, mat);
+  } else {
+    addBox(it.w, it.h, it.d, 0, it.h / 2, 0);
+  }
+  return g;
+}
+
+/* 洞洞板的洞點花紋（共用一份，不隨物件銷毀） */
+let pegTexCache = null;
+function pegboardTexture() {
+  if (pegTexCache) return pegTexCache;
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  const step = 24;
+  for (let y = step / 2; y < 256; y += step)
+    for (let x = step / 2; x < 256; x += step) {
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    }
+  pegTexCache = new THREE.CanvasTexture(c);
+  return pegTexCache;
+}
+
+function disposeGroup(g) {
+  g.traverse(o => {
+    if (o.isMesh || o.isLineSegments) {
+      o.geometry?.dispose();
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
+    }
+  });
+  g.clear();
+}
+
+/* --- 簡易軌道視角（拖曳旋轉、滾輪縮放） --- */
+const orbit = { theta: -Math.PI / 5, phi: Math.PI / 3.2, dist: 260 };
+function rebuild3dCamera() {
+  orbit.dist = Math.max(state.table.w, state.table.d) * 1.6 + 80;
+  applyCamera();
+}
+function applyCamera() {
+  const { h } = state.table;
+  const target = new THREE.Vector3(0, h * 0.9, 0);
+  camera.position.set(
+    target.x + orbit.dist * Math.sin(orbit.phi) * Math.sin(orbit.theta),
+    target.y + orbit.dist * Math.cos(orbit.phi),
+    target.z + orbit.dist * Math.sin(orbit.phi) * Math.cos(orbit.theta)
+  );
+  camera.lookAt(target);
+  renderer.render(scene, camera);
+}
+let orbitDrag = null;
+renderer.domElement.addEventListener('pointerdown', (evt) => {
+  orbitDrag = { x: evt.clientX, y: evt.clientY };
+  renderer.domElement.setPointerCapture(evt.pointerId);
+});
+renderer.domElement.addEventListener('pointermove', (evt) => {
+  if (!orbitDrag) return;
+  orbit.theta -= (evt.clientX - orbitDrag.x) * 0.006;
+  orbit.phi = Math.min(Math.PI / 2.05, Math.max(0.15, orbit.phi - (evt.clientY - orbitDrag.y) * 0.006));
+  orbitDrag = { x: evt.clientX, y: evt.clientY };
+  applyCamera();
+});
+renderer.domElement.addEventListener('pointerup', () => { orbitDrag = null; });
+renderer.domElement.addEventListener('wheel', (evt) => {
+  evt.preventDefault();
+  orbit.dist = Math.min(1500, Math.max(60, orbit.dist * (evt.deltaY > 0 ? 1.08 : 0.93)));
+  applyCamera();
+}, { passive: false });
+
+function resize3d() {
+  const rect = wrap.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  renderer.setSize(rect.width, rect.height);
+  camera.aspect = rect.width / rect.height;
+  camera.updateProjectionMatrix();
+  applyCamera();
+}
+new ResizeObserver(resize3d).observe(wrap);
+
+/* ================= main update ================= */
+function update() {
+  render2d();
+  renderStats();
+  build3dTable();
+  build3dItems();
+  applyCamera();
+}
+
+renderSidebar();
+rebuild3dCamera();
+resize3d();
+update();
+</script>
+</body>
+</html>

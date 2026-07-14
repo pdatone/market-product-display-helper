@@ -167,16 +167,15 @@
   }
   .pane .pane-head .title { font-weight: 600; letter-spacing: 1px; }
   .pane .pane-body { flex: 1; min-height: 0; position: relative; }
-  #svg2d { width: 100%; height: 100%; display: block; touch-action: none; }
   #canvas3dWrap { width: 100%; height: 100%; touch-action: none; }
   #canvas3dWrap canvas { display: block; }
-  #toolbar2d { margin-left: auto; display: flex; gap: 6px; }
+  #toolbar3d { margin-left: auto; display: flex; gap: 6px; }
   select {
     font-family: inherit; font-size: 12px; padding: 4px 6px;
     border: 1px solid var(--line); border-radius: 6px; background: #fff;
   }
   .kbd-hint { font-size: 11px; color: var(--muted); }
-  /* ---- mobile drawer / view toggle (hidden on desktop) ---- */
+  /* ---- mobile drawer (hidden on desktop) ---- */
   #menuBtn {
     display: none;
     position: fixed; left: 12px; bottom: 12px; z-index: 31;
@@ -190,21 +189,11 @@
     display: none;
     position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 29;
   }
-  #viewToggle {
-    display: none;
-    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 20;
-    gap: 2px; padding: 3px; border-radius: 999px;
-    background: var(--panel); box-shadow: 0 2px 8px rgba(0,0,0,.2);
-  }
-  #viewToggle button {
-    border: none; border-radius: 999px; padding: 6px 16px; font-size: 13px;
-    background: transparent; color: var(--ink);
-  }
-  #viewToggle button.active { background: var(--accent); color: #fff; }
   @media (max-width: 768px) {
     header .hint { display: none; }
     header h1 { font-size: 14px; }
-    #splitA, #splitB { display: none; }
+    #splitA { display: none; }
+    .kbd-hint { display: none; }
     #sidebar {
       position: fixed; top: 0; left: 0; bottom: 0;
       width: 85vw; max-width: 320px; z-index: 30;
@@ -214,16 +203,13 @@
     }
     #sidebar.open { transform: translateX(0); }
     #menuBtn { display: flex; }
-    #viewToggle { display: flex; }
-    #workspace[data-view="2d"] #pane3d { display: none; }
-    #workspace[data-view="3d"] #pane2d { display: none; }
   }
 </style>
 </head>
 <body>
 <header>
   <h1>🧱 市集擺攤陳列模擬器</h1>
-  <span class="hint">左側建立物件 → 加入桌面 → 在 2D 圖拖曳擺放，右側同步 3D 預覽（拖曳旋轉視角、滾輪縮放）</span>
+  <span class="hint">左側建立物件 → 加入桌面 → 直接在 3D 視口擺放：左鍵＝選取／拖曳物件，右鍵＝旋轉視角，中鍵＝平移，滾輪＝縮放</span>
 </header>
 <main>
   <div id="sidebar">
@@ -288,23 +274,17 @@
 
   <div class="splitter" id="splitA"></div>
   <div id="workspace">
-    <div class="pane" id="pane2d">
+    <div class="pane" id="pane3d">
       <div class="pane-head">
-        <span class="title">2D 俯視圖</span>
-        <div id="toolbar2d">
+        <span class="title">3D 編輯視口</span>
+        <button id="btnViewTop">俯視</button>
+        <button id="btnViewFront">前視</button>
+        <span class="kbd-hint">左鍵＝選取／拖曳物件，右鍵＝旋轉視角，中鍵＝平移，滾輪＝縮放</span>
+        <div id="toolbar3d">
+          <button id="btnRot" disabled>旋轉（R）</button>
           <button id="btnDup" disabled>複製（D）</button>
           <button id="btnDel" disabled>刪除（Del）</button>
         </div>
-      </div>
-      <div class="pane-body">
-        <svg id="svg2d" xmlns="http://www.w3.org/2000/svg"></svg>
-      </div>
-    </div>
-    <div class="splitter" id="splitB"></div>
-    <div class="pane" id="pane3d">
-      <div class="pane-head">
-        <span class="title">3D 預覽</span>
-        <span class="kbd-hint">拖曳＝旋轉視角，滾輪＝縮放</span>
       </div>
       <div class="pane-body"><div id="canvas3dWrap"></div></div>
     </div>
@@ -313,10 +293,6 @@
 
 <button id="menuBtn" title="開啟選單">☰</button>
 <div id="drawerBackdrop"></div>
-<div id="viewToggle">
-  <button data-view="2d" class="active">2D</button>
-  <button data-view="3d">3D</button>
-</div>
 
 <script type="module">
 import * as THREE from './vendor/three.module.js';
@@ -403,7 +379,7 @@ function effItem(p) {
   return { ...it, w: p.w ?? it.w, d: p.d ?? it.d, h: p.h ?? it.h };
 }
 
-/* 人偶目前位置（與物件同座標系：桌面左上角為原點，cm）；figureX/Y 為 null 時使用預設站位（桌前 40cm） */
+/* 人偶目前位置（與物件同座標系：桌面左上角為原點，cm）；figureX/Y 為 null 時使用預設站位（桌前 40cm）；可在 3D 視口直接拖曳 */
 function figurePos() {
   return {
     x: state.scene.figureX ?? state.table.w / 2,
@@ -422,14 +398,6 @@ function cornersOf(p) {
     x: p.cx + x * cos - y * sin,
     y: p.cy + x * sin + y * cos,
   }));
-}
-/* 物件在桌面上的軸對齊外框（AABB，供 label 字級估算、加入桌面找位置等用途） */
-function footprint(p) {
-  const c = cornersOf(p);
-  const xs = c.map(pt => pt.x), ys = c.map(pt => pt.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  return { x: minX, y: minY, w: maxX - minX, d: maxY - minY };
 }
 /* SAT（分離軸定理）矩形重疊判斷，傳入兩組已旋轉好的世界座標角點 */
 function satOverlap(cornersA, cornersB) {
@@ -486,7 +454,7 @@ function supportTop(pj, itj, worldPoint) {
   const EPS = 0.01;
   if (lx < -itj.w / 2 - EPS || lx > itj.w / 2 + EPS || ly < -itj.d / 2 - EPS || ly > itj.d / 2 + EPS) return null;
   if (itj.shape === 'steps') {
-    // 階梯：局部 -d 側（後排）最高，跟 2D/3D 繪製方向一致
+    // 階梯：局部 -d 側（後排）最高，跟 3D 繪製方向一致
     const n = itj.tiers || 3;
     const idx = Math.min(n - 1, Math.max(0, Math.floor((ly + itj.d / 2) / (itj.d / n))));
     return itj.h * (n - idx) / n;
@@ -523,320 +491,11 @@ function computeElevations() {
   return elev;
 }
 
-/* ================= 2D editor (SVG) ================= */
-const svg = document.getElementById('svg2d');
-const SVGNS = 'http://www.w3.org/2000/svg';
-const PAD = 12; // viewBox 周圍留白（cm）
-
-function svgPoint(evt) {
-  const pt = new DOMPoint(evt.clientX, evt.clientY);
-  return pt.matrixTransform(svg.getScreenCTM().inverse());
-}
-
-function render2d(elevations) {
-  const { w, d } = state.table;
-  // viewBox 基礎範圍是桌子 (0,0)-(w,d)；人偶開啟時聯集擴大到含人偶位置周圍 ±25cm，最後四邊加 PAD 留白
-  let minX = 0, minY = 0, maxX = w, maxY = d;
-  if (state.scene.figureOn) {
-    const fp = figurePos();
-    minX = Math.min(minX, fp.x - 25); maxX = Math.max(maxX, fp.x + 25);
-    minY = Math.min(minY, fp.y - 25); maxY = Math.max(maxY, fp.y + 25);
-  }
-  minX -= PAD; minY -= PAD; maxX += PAD; maxY += PAD;
-  svg.setAttribute('viewBox', `${minX} ${minY} ${maxX - minX} ${maxY - minY}`);
-  svg.innerHTML = '';
-
-  // 桌面（桌布關閉時顯示裸桌底色，不套用桌布色）
-  const tableFill = state.scene.clothOn === false ? '#f8faf4' : tint(state.scene.clothColor, 0.75);
-  const tbl = el('rect', { x: 0, y: 0, width: w, height: d, fill: tableFill, stroke: '#9dab94', 'stroke-width': 0.6, rx: 1 });
-  svg.appendChild(tbl);
-
-  // 格線（5cm）
-  const grid = el('g', { stroke: '#dde5d4', 'stroke-width': 0.25 });
-  for (let x = 5; x < w; x += 5) grid.appendChild(el('line', { x1: x, y1: 0, x2: x, y2: d }));
-  for (let y = 5; y < d; y += 5) grid.appendChild(el('line', { x1: 0, y1: y, x2: w, y2: y }));
-  svg.appendChild(grid);
-
-  // 尺寸標示
-  svg.appendChild(txt(w / 2, -4, `${w} cm`, 4.5));
-  const dLabel = txt(-5, d / 2, `${d} cm`, 4.5);
-  dLabel.setAttribute('transform', `rotate(-90 ${-5} ${d / 2})`);
-  svg.appendChild(dLabel);
-
-  const conflicts = computeConflicts();
-
-  for (const p of state.placed) {
-    const it = effItem(p);
-    if (!it) continue;
-    const f = footprint(p);
-    const g = el('g', { 'data-id': p.id, cursor: 'move' });
-    const bad = conflicts.has(p.id);
-    const sel = p.id === selectedId;
-    // 物件本體畫在以中心點為原點的局部座標，跟著 rot 旋轉
-    const local = el('g', { transform: `translate(${p.cx} ${p.cy}) rotate(${p.rot})` });
-    local.appendChild(el('rect', {
-      x: -it.w / 2, y: -it.d / 2, width: it.w, height: it.d, rx: 0.8,
-      fill: bad ? '#d9aca4' : it.color,
-      'fill-opacity': 0.85,
-      stroke: bad ? '#b05d54' : (sel ? '#39423a' : 'rgba(0,0,0,.35)'),
-      'stroke-width': sel ? 1 : 0.4,
-      'stroke-dasharray': sel ? '2 1.2' : 'none',
-    }));
-    if (it.shape === 'steps') {
-      // 階梯：局部 -d 側（後排）最高、顏色最深
-      const n = it.tiers || 3;
-      for (let j = 0; j < n; j++) {
-        local.appendChild(el('rect', {
-          x: -it.w / 2, y: -it.d / 2 + j * it.d / n, width: it.w, height: it.d / n,
-          fill: '#000', 'fill-opacity': (0.2 * (n - 1 - j) / (n - 1)).toFixed(2),
-          stroke: 'rgba(0,0,0,.25)', 'stroke-width': 0.2,
-        }));
-      }
-    }
-    // 選取時顯示旋轉把手：局部座標 (0, -d/2-6) 處的小圓，跟著物件一起旋轉
-    const handleR = 2.5;
-    const hy = -it.d / 2 - 6;
-    if (sel) {
-      local.appendChild(el('line', { x1: 0, y1: 0, x2: 0, y2: hy, stroke: '#39423a', 'stroke-width': 0.4, 'stroke-dasharray': '1.2 1' }));
-      const handle = el('circle', { cx: 0, cy: hy, r: handleR, fill: '#fff', stroke: '#39423a', 'stroke-width': 0.6, cursor: 'grab', class: 'rot-handle' });
-      handle.dataset.id = p.id;
-      local.appendChild(handle);
-    }
-    g.appendChild(local);
-    // 名稱（放得下才顯示）
-    const fontSize = Math.min(4, f.w / (it.name.length + 1) * 1.6, f.d * 0.5);
-    if (fontSize > 2) {
-      const label = txt(p.cx, p.cy, it.name, fontSize);
-      label.setAttribute('fill', '#fff');
-      label.setAttribute('style', 'paint-order:stroke; stroke:rgba(0,0,0,.4); stroke-width:0.4px;');
-      g.appendChild(label);
-    }
-    // 堆疊高度標籤（z > 0 才顯示），放在名稱下方，不隨物件旋轉
-    const z = elevations ? (elevations.get(p.id) || 0) : 0;
-    if (z > 0.001) {
-      const zr = Math.round(z * 10) / 10;
-      const zStr = Number.isInteger(zr) ? String(zr) : zr.toFixed(1);
-      const zLabel = txt(p.cx, p.cy + 4, `↑${zStr}cm`, 3);
-      zLabel.setAttribute('fill', '#39423a');
-      zLabel.setAttribute('font-weight', '600');
-      zLabel.setAttribute('style', 'paint-order:stroke; stroke:#fff; stroke-width:0.6px;');
-      g.appendChild(zLabel);
-    }
-    // 拖曳旋轉把手中顯示目前角度（不隨物件旋轉，維持水平好讀）
-    if (rotateDrag && rotateDrag.id === p.id) {
-      const th = p.rot * Math.PI / 180;
-      const lx = handleR + 5, ly = hy;
-      const wx = p.cx + lx * Math.cos(th) - ly * Math.sin(th);
-      const wy = p.cy + lx * Math.sin(th) + ly * Math.cos(th);
-      const angLabel = txt(wx, wy, `${Math.round(p.rot)}°`, 4);
-      angLabel.setAttribute('text-anchor', 'start');
-      angLabel.setAttribute('fill', '#39423a');
-      angLabel.setAttribute('style', 'paint-order:stroke; stroke:#fff; stroke-width:0.6px;');
-      g.appendChild(angLabel);
-    }
-    // 雙指縮放中即時顯示尺寸（寬×深 cm），放在名稱／堆疊標籤下方，不隨物件旋轉
-    if (pinchingId === p.id) {
-      const dimStr = `${fmtDim(it.w)}×${fmtDim(it.d)} cm`;
-      const dimLabel = txt(p.cx, p.cy + (z > 0.001 ? 8 : 4), dimStr, 3);
-      dimLabel.setAttribute('fill', '#39423a');
-      dimLabel.setAttribute('font-weight', '600');
-      dimLabel.setAttribute('style', 'paint-order:stroke; stroke:#fff; stroke-width:0.6px;');
-      g.appendChild(dimLabel);
-    }
-    svg.appendChild(g);
-  }
-
-  // 人偶圖示（畫在所有物件之後，最上層；可拖曳移動）
-  if (state.scene.figureOn) {
-    const fp = figurePos();
-    const fg = el('g', { 'data-figure': '1', cursor: 'move' });
-    fg.appendChild(el('ellipse', {
-      cx: fp.x, cy: fp.y, rx: 22, ry: 12,
-      fill: '#b8b4aa', 'fill-opacity': 0.85, stroke: 'rgba(0,0,0,.3)', 'stroke-width': 0.4,
-    }));
-    fg.appendChild(el('circle', {
-      cx: fp.x, cy: fp.y, r: 9,
-      fill: '#d8d5cf', stroke: 'rgba(0,0,0,.3)', 'stroke-width': 0.4,
-    }));
-    const fLabel = txt(fp.x, fp.y + 18, '人偶', 4);
-    fg.appendChild(fLabel);
-    svg.appendChild(fg);
-  }
-}
-
-/* 顏色往白色混合（f = 混入白色的比例，0~1），用來把桌布色淡化成桌面底色 */
-function tint(hex, f) {
-  const c = new THREE.Color(hex);
-  const mix = (v) => Math.round((v * (1 - f) + 1 * f) * 255);
-  return `rgb(${mix(c.r)}, ${mix(c.g)}, ${mix(c.b)})`;
-}
-function el(tag, attrs) {
-  const n = document.createElementNS(SVGNS, tag);
-  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
-  return n;
-}
-function txt(x, y, s, size) {
-  const t = el('text', { x, y, 'font-size': size, 'text-anchor': 'middle', 'dominant-baseline': 'central', fill: '#7d8a7c', 'font-family': 'inherit' });
-  t.textContent = s;
-  return t;
-}
-/* 尺寸數字格式化：四捨五入到 0.1，整數不帶小數位 */
-function fmtDim(n) {
-  const r = Math.round(n * 10) / 10;
-  return Number.isInteger(r) ? String(r) : r.toFixed(1);
-}
-
-/* --- drag（移動 + 旋轉把手 + 人偶拖曳） --- */
-let drag = null;
-let rotateDrag = null;
-let figureDrag = null;
-/* --- 雙指縮放（pinch）：僅在選取某物件時，等比調整該擺放實例的大小，不影響物件庫原始尺寸與其他實例 --- */
-const svgPointers = new Map(); // pointerId -> { x, y }（client 座標，僅用來算兩指距離）
-let pinchResize = null; // { id, startDist, startW, startD, startH }
-let pinchingId = null; // 目前正在 pinch 縮放中的物件 id（供 render2d 顯示即時尺寸）
-let pendingDeselect = false; // 空白處按下時先掛起，放開時仍是單指才真正取消選取
-svg.addEventListener('pointerdown', (evt) => {
-  svgPointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
-  if (svgPointers.size >= 2) {
-    // 兩指以上一律視為縮放手勢，取消進行中的單指拖曳／旋轉／人偶拖曳
-    drag = null; rotateDrag = null; figureDrag = null;
-    pendingDeselect = false;
-    if (svgPointers.size === 2 && selectedId != null) {
-      const p = state.placed.find(q => q.id === selectedId);
-      if (p) {
-        const it = effItem(p);
-        const pts = [...svgPointers.values()];
-        pinchResize = {
-          id: p.id,
-          startDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
-          startW: it.w,
-          startD: it.d,
-          startH: it.h,
-        };
-        pinchingId = p.id;
-      }
-    }
-    svg.setPointerCapture(evt.pointerId);
-    evt.preventDefault();
-    return;
-  }
-  const handle = evt.target.closest('.rot-handle');
-  if (handle) {
-    evt.stopPropagation();
-    const id = Number(handle.dataset.id);
-    const p = state.placed.find(q => q.id === id);
-    if (!p) return;
-    rotateDrag = { id };
-    svg.setPointerCapture(evt.pointerId);
-    return;
-  }
-  const figureG = evt.target.closest('g[data-figure]');
-  if (figureG) {
-    const fp = figurePos();
-    const pt = svgPoint(evt);
-    figureDrag = { dx: fp.x - pt.x, dy: fp.y - pt.y };
-    svg.setPointerCapture(evt.pointerId);
-    return;
-  }
-  const g = evt.target.closest('g[data-id]');
-  if (!g) {
-    // 空白處按下不立刻取消選取：第二指可能接著落下要做兩指縮放
-    pendingDeselect = true;
-    return;
-  }
-  const id = Number(g.dataset.id);
-  // 開始拖曳移動時，把該物件移到陣列尾端（提升堆疊優先序，疊在其他物件上方）
-  const idx = state.placed.findIndex(q => q.id === id);
-  if (idx !== -1 && idx !== state.placed.length - 1) {
-    const [item] = state.placed.splice(idx, 1);
-    state.placed.push(item);
-    saveState();
-  }
-  select(id);
-  const p = state.placed.find(q => q.id === id);
-  const pt = svgPoint(evt);
-  drag = { id, dx: p.cx - pt.x, dy: p.cy - pt.y, moved: false };
-  svg.setPointerCapture(evt.pointerId);
-});
-svg.addEventListener('pointermove', (evt) => {
-  if (svgPointers.has(evt.pointerId)) {
-    svgPointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
-  }
-  if (pinchResize) {
-    // pinch 進行中時，單指的拖曳／旋轉／人偶拖曳分支一律跳過
-    if (svgPointers.size >= 2) {
-      const p = state.placed.find(q => q.id === pinchResize.id);
-      if (p) {
-        const pts = [...svgPointers.values()];
-        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        if (dist > 0 && pinchResize.startDist > 0) {
-          const ratio = Math.min(4, Math.max(0.25, dist / pinchResize.startDist));
-          p.w = Math.max(0.5, Math.round(pinchResize.startW * ratio * 2) / 2);
-          p.d = Math.max(0.5, Math.round(pinchResize.startD * ratio * 2) / 2);
-          p.h = Math.max(0.5, Math.round(pinchResize.startH * ratio * 2) / 2);
-          update();
-        }
-      }
-    }
-    evt.preventDefault();
-    return;
-  }
-  if (rotateDrag) {
-    const p = state.placed.find(q => q.id === rotateDrag.id);
-    if (!p) return;
-    const pt = svgPoint(evt);
-    const dx = pt.x - p.cx, dy = pt.y - p.cy;
-    // 把手在 rot=0 時指向正上方（局部 -y），依滑鼠相對中心角度即時算出 rot
-    let angle = Math.atan2(dx, -dy) * 180 / Math.PI;
-    const snapDeg = evt.shiftKey ? 1 : 15;
-    angle = Math.round(angle / snapDeg) * snapDeg;
-    p.rot = ((angle % 360) + 360) % 360;
-    update();
-    return;
-  }
-  if (figureDrag) {
-    const pt = svgPoint(evt);
-    const snap = 1;
-    state.scene.figureX = Math.round((pt.x + figureDrag.dx) / snap) * snap;
-    state.scene.figureY = Math.round((pt.y + figureDrag.dy) / snap) * snap;
-    update();
-    return;
-  }
-  if (!drag) return;
-  const p = state.placed.find(q => q.id === drag.id);
-  if (!p) return;
-  const pt = svgPoint(evt);
-  const snap = 1;
-  p.cx = Math.round((pt.x + drag.dx) / snap) * snap;
-  p.cy = Math.round((pt.y + drag.dy) / snap) * snap;
-  drag.moved = true;
-  update();
-});
-function endSvgPointer(evt) {
-  svgPointers.delete(evt.pointerId);
-  if (pendingDeselect && svgPointers.size === 0) {
-    pendingDeselect = false;
-    select(null);
-  }
-  if (pinchResize && svgPointers.size < 2) {
-    pinchResize = null;
-    pinchingId = null;
-    saveState();
-    update();
-  }
-  if (drag && drag.moved) saveState();
-  if (rotateDrag) saveState();
-  if (figureDrag) saveState();
-  drag = null;
-  rotateDrag = null;
-  figureDrag = null;
-}
-svg.addEventListener('pointerup', endSvgPointer);
-svg.addEventListener('pointercancel', endSvgPointer);
-
+/* ================= 選取／工具列 ================= */
 function select(id) {
   selectedId = id;
   const has = id != null;
+  document.getElementById('btnRot').disabled = !has;
   document.getElementById('btnDup').disabled = !has;
   document.getElementById('btnDel').disabled = !has;
   update();
@@ -862,6 +521,7 @@ function delSelected() {
   select(null);
   saveState();
 }
+document.getElementById('btnRot').addEventListener('click', rotateSelected);
 document.getElementById('btnDup').addEventListener('click', dupSelected);
 document.getElementById('btnDel').addEventListener('click', delSelected);
 document.addEventListener('keydown', (evt) => {
@@ -1137,6 +797,13 @@ const ground = new THREE.Mesh(
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 
+// 地面格線（低對比灰綠，僅供對位參考；略高於地面圓盤避免 z-fighting）
+const gridHelper = new THREE.GridHelper(1200, 60, 0x93a28c, 0x93a28c);
+gridHelper.material.transparent = true;
+gridHelper.material.opacity = 0.22;
+gridHelper.position.y = 0.08;
+scene.add(gridHelper);
+
 /* 依場景設定套用背景色與地面色（地面比背景略深，帶出立體感） */
 function applySceneColors() {
   scene.background.set(state.scene.bg);
@@ -1147,7 +814,8 @@ function applySceneColors() {
 let tableGroup = new THREE.Group();
 let itemGroup = new THREE.Group();
 let figureGroup = new THREE.Group();
-scene.add(tableGroup, itemGroup, figureGroup);
+let handleGroup = new THREE.Group(); // 選取物件的旋轉把手（虛線＋小球）
+scene.add(tableGroup, itemGroup, figureGroup, handleGroup);
 
 function build3dTable() {
   disposeGroup(tableGroup);
@@ -1189,6 +857,11 @@ function build3dTable() {
   }
 }
 
+/* 物件墊高量：桌布開啟時物件墊在桌布頂面（+0.5cm），關閉時直接放在桌板頂面 */
+function clothOffsetY() {
+  return state.scene.clothOn === false ? 0 : 0.5;
+}
+
 function build3dItems(elevations) {
   disposeGroup(itemGroup);
   const conflicts = computeConflicts();
@@ -1197,14 +870,13 @@ function build3dItems(elevations) {
     const it = effItem(p);
     if (!it) continue;
     const g = buildItemGroup(it, conflicts.has(p.id));
+    g.userData.placedId = p.id; // 供 raycast 命中後反查是哪個擺放物
     if (p.id === selectedId) {
       g.traverse(o => { if (o.isMesh) o.material.emissive = new THREE.Color('#3f4d3a'); });
     }
     const z = elevations.get(p.id) || 0;
-    // 2D 的 (cx, cy) 對應 3D 的 (x, z)；2D 原點在桌面左上角，3D 桌面中心在原點；z 為堆疊高度
-    // 桌布開啟時物件墊在桌布頂面（+0.5），關閉時直接放在桌板頂面
-    const clothOffset = state.scene.clothOn === false ? 0 : 0.5;
-    g.position.set(p.cx - w / 2, h + clothOffset + z, p.cy - d / 2);
+    // 平面座標 (cx, cy) 對應 3D 的 (x, z)；cx/cy 原點在桌面左上角，3D 桌面中心在原點；z 為堆疊高度
+    g.position.set(p.cx - w / 2, h + clothOffsetY() + z, p.cy - d / 2);
     g.rotation.y = -p.rot * Math.PI / 180;
     itemGroup.add(g);
   }
@@ -1356,7 +1028,7 @@ function pegboardTexture() {
 
 function disposeGroup(g) {
   g.traverse(o => {
-    if (o.isMesh || o.isLineSegments) {
+    if (o.isMesh || o.isLine || o.isLineSegments) {
       o.geometry?.dispose();
       (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
     }
@@ -1364,15 +1036,58 @@ function disposeGroup(g) {
   g.clear();
 }
 
-/* --- 簡易軌道視角（拖曳旋轉、滾輪縮放） --- */
-const orbit = { theta: -Math.PI / 5, phi: Math.PI / 3.2, dist: 260 };
+/* --- 選取物件的旋轉把手（移植自 2D 版：中心往局部 -z 伸出虛線，末端小球可拖曳旋轉） --- */
+let rotHandleInfo = null; // { id, y }：把手對應的擺放物 id 與把手所在水平面高度（世界座標）
+function buildRotHandle(elevations) {
+  disposeGroup(handleGroup);
+  rotHandleInfo = null;
+  const p = state.placed.find(q => q.id === selectedId);
+  const it = p ? effItem(p) : null;
+  if (!p || !it) return;
+  const { w, d, h } = state.table;
+  // 把手放在物件底面略上方（+1cm），rot=0 時指向局部 -z（顧客側的反方向，即桌子後側）
+  const y = h + clothOffsetY() + (elevations.get(p.id) || 0) + 1;
+  handleGroup.position.set(p.cx - w / 2, y, p.cy - d / 2);
+  handleGroup.rotation.y = -p.rot * Math.PI / 180;
+  const len = it.d / 2 + 6; // 距物件中心的距離（同 2D 版：d/2 + 6cm）
+  // 虛線：物件中心 → 把手
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -len),
+  ]);
+  // 把手屬於編輯 gizmo，關閉深度測試讓它永遠畫在最上層，不被物件本身擋住
+  const line = new THREE.Line(lineGeo, new THREE.LineDashedMaterial({ color: 0x39423a, dashSize: 1.5, gapSize: 1.2, depthTest: false }));
+  line.computeLineDistances();
+  line.renderOrder = 10;
+  handleGroup.add(line);
+  // 小球本體
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(2.5, 16, 12),
+    new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x39423a, emissiveIntensity: 0.2, depthTest: false })
+  );
+  ball.position.set(0, 0, -len);
+  ball.renderOrder = 11;
+  handleGroup.add(ball);
+  // 較大的透明命中球，讓滑鼠／手指好點一點（raycast 仍會命中透明材質）
+  const hit = new THREE.Mesh(
+    new THREE.SphereGeometry(5, 8, 6),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+  );
+  hit.position.set(0, 0, -len);
+  handleGroup.add(hit);
+  rotHandleInfo = { id: p.id, y };
+}
+
+/* --- 軌道視角（右鍵旋轉、中鍵平移、滾輪縮放；pan 為中鍵平移的累積偏移量） --- */
+const orbit = { theta: -Math.PI / 5, phi: Math.PI / 3.2, dist: 260, pan: new THREE.Vector3() };
 function rebuild3dCamera() {
   orbit.dist = Math.max(state.table.w, state.table.d) * 1.6 + 80;
+  orbit.pan.set(0, 0, 0); // 重設鏡頭時平移偏移歸零，回到看整張桌子
   applyCamera();
 }
 function applyCamera() {
   const { h } = state.table;
-  const target = new THREE.Vector3(0, h * 0.9, 0);
+  // 視角目標點 = 基準點（桌面偏上）＋ 中鍵平移偏移量
+  const target = new THREE.Vector3(0, h * 0.9, 0).add(orbit.pan);
   camera.position.set(
     target.x + orbit.dist * Math.sin(orbit.phi) * Math.sin(orbit.theta),
     target.y + orbit.dist * Math.cos(orbit.phi),
@@ -1381,10 +1096,62 @@ function applyCamera() {
   camera.lookAt(target);
   renderer.render(scene, camera);
 }
-let orbitDrag = null;
-/* 多指觸控支援：activePointers 追蹤所有目前按下的指標（單指旋轉／雙指捏合縮放） */
+/* 視角預設：俯視（桌面正上方往下看整張桌子） */
+function viewTop() {
+  const { w, d, h } = state.table;
+  orbit.theta = 0;
+  orbit.phi = 0.02; // 取很小值而非 0，避免 lookAt 的上向量退化
+  orbit.dist = Math.max(w, d) * 1.4 + 60;
+  orbit.pan.set(0, h * 0.1, 0); // 基準點 (0, h*0.9, 0) 加偏移 → 對準桌面中心 (0, h, 0)
+  applyCamera();
+}
+/* 視角預設：前視（從桌子前方＝顧客側水平偏上一點看向桌面） */
+function viewFront() {
+  const { w, d, h } = state.table;
+  orbit.theta = 0;
+  orbit.phi = Math.PI / 2.05;
+  orbit.dist = Math.max(w, d) * 1.4 + 60;
+  orbit.pan.set(0, 0, 0); // 目標點回到基準點 (0, h*0.9, 0)
+  applyCamera();
+}
+document.getElementById('btnViewTop').addEventListener('click', viewTop);
+document.getElementById('btnViewFront').addEventListener('click', viewFront);
+
+/* ================= 3D 視口互動 =================
+   左鍵＝選取／拖曳物件（含旋轉把手、人偶），右鍵＝旋轉視角，中鍵＝平移，滾輪＝縮放；
+   觸控：單指按物件＝拖曳、按空白＝旋轉視角、雙指捏合＝縮放 */
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+/* 依滑鼠事件位置設定 raycaster 的射線 */
+function setRayFromEvent(evt) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.set(
+    ((evt.clientX - rect.left) / rect.width) * 2 - 1,
+    -((evt.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  raycaster.setFromCamera(ndc, camera);
+}
+/* 目前射線與水平面 y=planeY 的交點（世界座標），沒交到回傳 null */
+function rayHitPlaneY(planeY) {
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY);
+  const out = new THREE.Vector3();
+  return raycaster.ray.intersectPlane(plane, out) ? out : null;
+}
+/* 從 raycast 交到的 Object3D 往 parent 走，找出存有擺放物 id 的 group */
+function findPlacedId(obj) {
+  let o = obj;
+  while (o && o !== itemGroup) {
+    if (o.userData.placedId != null) return o.userData.placedId;
+    o = o.parent;
+  }
+  return null;
+}
+
+let nav = null;    // 視角操作中：{ mode: 'orbit' | 'pan', pointerId, x, y, isTouch, moved }
+let drag3d = null; // 物件互動中：{ mode: 'item' | 'figure' | 'handle', pointerId, ... }
+/* 觸控指標追蹤（只收 pointerType === 'touch'，給雙指捏合縮放用；滑鼠不進來） */
 const activePointers = new Map(); // pointerId -> { x, y }
-let pinchStart = null; // { dist } 雙指開始捏合時的距離與 orbit.dist
+let pinchStart = null; // { dist, orbitDist } 雙指開始捏合時的距離與 orbit.dist
 
 function pointA() { return [...activePointers.values()][0]; }
 function pointB() { return [...activePointers.values()][1]; }
@@ -1393,53 +1160,197 @@ function pinchDist() {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-renderer.domElement.addEventListener('pointerdown', (evt) => {
-  activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
-  renderer.domElement.setPointerCapture(evt.pointerId);
-  if (activePointers.size === 1) {
-    orbitDrag = { x: evt.clientX, y: evt.clientY };
-    pinchStart = null;
-  } else if (activePointers.size === 2) {
-    orbitDrag = null; // 雙指時停止旋轉，改走捏合縮放
-    pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
+/* 左鍵（或觸控單指）按下：依 raycast 結果進入對應模式，優先序：旋轉把手 > 人偶 > 物件 > 空白 */
+function beginPrimary(evt) {
+  const isTouch = evt.pointerType === 'touch';
+  const { w, d, h } = state.table;
+  setRayFromEvent(evt);
+  // 1) 旋轉把手（優先於一般物件）
+  if (rotHandleInfo && raycaster.intersectObject(handleGroup, true).length) {
+    drag3d = { mode: 'handle', pointerId: evt.pointerId, id: rotHandleInfo.id, planeY: rotHandleInfo.y, moved: false };
+    return;
   }
-});
-renderer.domElement.addEventListener('pointermove', (evt) => {
-  if (!activePointers.has(evt.pointerId)) return;
-  activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
-  if (activePointers.size >= 2) {
-    if (!pinchStart) pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
-    const d = pinchDist();
-    if (d > 0) {
-      orbit.dist = Math.min(1500, Math.max(60, pinchStart.orbitDist * (pinchStart.dist / d)));
-      applyCamera();
+  // 2) 人偶（開啟時可拖曳，拖曳平面取地面 y=0）
+  if (state.scene.figureOn && raycaster.intersectObject(figureGroup, true).length) {
+    const hit = rayHitPlaneY(0);
+    if (hit) {
+      const fp = figurePos();
+      drag3d = {
+        mode: 'figure', pointerId: evt.pointerId,
+        dx: fp.x - (hit.x + w / 2), dy: fp.y - (hit.z + d / 2), moved: false,
+      };
     }
     return;
   }
-  if (!orbitDrag) return;
-  orbit.theta -= (evt.clientX - orbitDrag.x) * 0.006;
-  orbit.phi = Math.min(Math.PI / 2.05, Math.max(0.15, orbit.phi - (evt.clientY - orbitDrag.y) * 0.006));
-  orbitDrag = { x: evt.clientX, y: evt.clientY };
-  applyCamera();
-});
-function releasePointer(evt) {
-  activePointers.delete(evt.pointerId);
-  if (activePointers.size >= 2) {
-    // 仍有兩指以上：以剩下的兩指重設捏合起點，避免跳動
-    pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
-    orbitDrag = null;
-  } else if (activePointers.size === 1) {
-    // 從雙指回到單指：以剩下那指的目前座標重設旋轉起點，避免跳動
-    const p = pointA();
-    orbitDrag = { x: p.x, y: p.y };
-    pinchStart = null;
+  // 3) 一般物件：選取＋開始拖曳
+  let placedId = null;
+  for (const hit of raycaster.intersectObjects(itemGroup.children, true)) {
+    placedId = findPlacedId(hit.object);
+    if (placedId != null) break;
+  }
+  if (placedId != null) {
+    // 開始拖曳時把該物件移到陣列尾端（提升堆疊優先序，疊在其他物件上方），同原本 2D 版行為
+    const idx = state.placed.findIndex(q => q.id === placedId);
+    if (idx !== -1 && idx !== state.placed.length - 1) {
+      const [item] = state.placed.splice(idx, 1);
+      state.placed.push(item);
+      saveState();
+    }
+    select(placedId);
+    const p = state.placed.find(q => q.id === placedId);
+    // 拖曳平面取「該物件底面高度」的水平面，滑鼠在平面上的位移即為物件位移
+    const elev = computeElevations();
+    const planeY = h + clothOffsetY() + (elev.get(placedId) || 0);
+    const hit = rayHitPlaneY(planeY);
+    if (hit) {
+      drag3d = {
+        mode: 'item', pointerId: evt.pointerId, id: placedId, planeY,
+        dx: p.cx - (hit.x + w / 2), dy: p.cy - (hit.z + d / 2), moved: false,
+      };
+    }
+    return;
+  }
+  // 4) 空白處：滑鼠＝取消選取（絕不旋轉視角）；觸控＝旋轉視角，放開時沒移動才視為點一下取消選取
+  if (isTouch) {
+    nav = { mode: 'orbit', pointerId: evt.pointerId, x: evt.clientX, y: evt.clientY, isTouch: true, moved: false };
   } else {
-    orbitDrag = null;
+    select(null);
+  }
+}
+
+renderer.domElement.addEventListener('pointerdown', (evt) => {
+  if (evt.pointerType === 'touch') {
+    activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+    renderer.domElement.setPointerCapture(evt.pointerId);
+    if (activePointers.size >= 2) {
+      // 第二指落下：取消單指拖曳／旋轉，改走雙指捏合縮放（取消不存檔）
+      drag3d = null;
+      nav = null;
+      pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
+      evt.preventDefault();
+      return;
+    }
     pinchStart = null;
+    beginPrimary(evt);
+    return;
+  }
+  // 滑鼠／觸控筆：已有進行中的模式時，忽略後按下的其他鍵（只認先開始的模式）
+  if (nav || drag3d) return;
+  renderer.domElement.setPointerCapture(evt.pointerId);
+  if (evt.button === 0) {
+    beginPrimary(evt);
+  } else if (evt.button === 1) {
+    evt.preventDefault(); // 避免瀏覽器中鍵 autoscroll
+    nav = { mode: 'pan', pointerId: evt.pointerId, x: evt.clientX, y: evt.clientY, isTouch: false, moved: false };
+  } else if (evt.button === 2) {
+    nav = { mode: 'orbit', pointerId: evt.pointerId, x: evt.clientX, y: evt.clientY, isTouch: false, moved: false };
+  }
+});
+
+renderer.domElement.addEventListener('pointermove', (evt) => {
+  // 觸控雙指捏合縮放
+  if (evt.pointerType === 'touch' && activePointers.has(evt.pointerId)) {
+    activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+    if (activePointers.size >= 2) {
+      if (!pinchStart) pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
+      const dd = pinchDist();
+      if (dd > 0) {
+        orbit.dist = Math.min(1500, Math.max(60, pinchStart.orbitDist * (pinchStart.dist / dd)));
+        applyCamera();
+      }
+      return;
+    }
+  }
+  // 物件互動（拖曳移動／旋轉把手／人偶）
+  if (drag3d && drag3d.pointerId === evt.pointerId) {
+    const { w, d } = state.table;
+    setRayFromEvent(evt);
+    if (drag3d.mode === 'item') {
+      const p = state.placed.find(q => q.id === drag3d.id);
+      const hit = rayHitPlaneY(drag3d.planeY);
+      if (p && hit) {
+        // 平面交點換算回桌面座標（原點在桌面左上角），1cm 吸附
+        p.cx = Math.round(hit.x + w / 2 + drag3d.dx);
+        p.cy = Math.round(hit.z + d / 2 + drag3d.dy);
+        drag3d.moved = true;
+        update();
+      }
+    } else if (drag3d.mode === 'handle') {
+      const p = state.placed.find(q => q.id === drag3d.id);
+      const hit = rayHitPlaneY(drag3d.planeY);
+      if (p && hit) {
+        const dx = hit.x - (p.cx - w / 2);
+        const dz = hit.z - (p.cy - d / 2);
+        // 與 2D 版 atan2(dx, -dy) 同推導：把手在 rot=0 時指向局部 -z（即 2D 的 -y），
+        // 把手世界方位 (dx, dz) = (L·sinθ, -L·cosθ)，反解 θ = atan2(dx, -dz)
+        let angle = Math.atan2(dx, -dz) * 180 / Math.PI;
+        const snapDeg = evt.shiftKey ? 1 : 15;
+        angle = Math.round(angle / snapDeg) * snapDeg;
+        p.rot = ((angle % 360) + 360) % 360;
+        drag3d.moved = true;
+        update();
+      }
+    } else if (drag3d.mode === 'figure') {
+      const hit = rayHitPlaneY(0);
+      if (hit) {
+        state.scene.figureX = Math.round(hit.x + w / 2 + drag3d.dx);
+        state.scene.figureY = Math.round(hit.z + d / 2 + drag3d.dy);
+        drag3d.moved = true;
+        update();
+      }
+    }
+    return;
+  }
+  // 視角操作（右鍵旋轉／中鍵平移／觸控單指空白處旋轉）
+  if (nav && nav.pointerId === evt.pointerId) {
+    const dx = evt.clientX - nav.x, dy = evt.clientY - nav.y;
+    if (Math.abs(dx) + Math.abs(dy) > 1) nav.moved = true;
+    if (nav.mode === 'orbit') {
+      orbit.theta -= dx * 0.006;
+      orbit.phi = Math.min(Math.PI / 2.05, Math.max(0.15, orbit.phi - dy * 0.006));
+    } else {
+      // 平移：沿相機的右向量／上向量移動目標點，讓畫面跟著手走；速度與距離成正比
+      const k = orbit.dist / 600;
+      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+      const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+      orbit.pan.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
+    }
+    nav.x = evt.clientX;
+    nav.y = evt.clientY;
+    applyCamera();
+  }
+});
+
+function releasePointer(evt) {
+  if (evt.pointerType === 'touch') {
+    activePointers.delete(evt.pointerId);
+    if (activePointers.size >= 2) {
+      // 仍有兩指以上：以剩下的兩指重設捏合起點，避免跳動
+      pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
+    } else if (activePointers.size === 1 && !drag3d && !nav) {
+      // 從雙指回到單指：以剩下那指繼續旋轉視角，避免手勢中斷（moved 設 true，放開不當作點擊取消選取）
+      pinchStart = null;
+      const pid = [...activePointers.keys()][0];
+      const p = pointA();
+      nav = { mode: 'orbit', pointerId: pid, x: p.x, y: p.y, isTouch: true, moved: true };
+    } else {
+      pinchStart = null;
+    }
+  }
+  if (drag3d && drag3d.pointerId === evt.pointerId) {
+    if (drag3d.moved) saveState(); // 有實際移動／旋轉才存檔
+    drag3d = null;
+  }
+  if (nav && nav.pointerId === evt.pointerId) {
+    // 觸控在空白處點一下（沒有拖動）＝取消選取
+    if (nav.isTouch && !nav.moved) select(null);
+    nav = null;
   }
 }
 renderer.domElement.addEventListener('pointerup', releasePointer);
 renderer.domElement.addEventListener('pointercancel', releasePointer);
+// 右鍵用於旋轉視角，攔掉瀏覽器右鍵選單
+renderer.domElement.addEventListener('contextmenu', (evt) => evt.preventDefault());
 renderer.domElement.addEventListener('wheel', (evt) => {
   evt.preventDefault();
   orbit.dist = Math.min(1500, Math.max(60, orbit.dist * (evt.deltaY > 0 ? 1.08 : 0.93)));
@@ -1456,19 +1367,16 @@ function resize3d() {
 }
 new ResizeObserver(resize3d).observe(wrap);
 
-/* ================= 版面分隔條（側欄／2D／3D 可拖拉調整寬度） ================= */
+/* ================= 版面分隔條（側欄寬度可拖拉調整） ================= */
 const UI_KEY = 'market-display-ui';
 const sidebarEl = document.getElementById('sidebar');
-const pane2dEl = document.getElementById('pane2d');
 const splitA = document.getElementById('splitA');
-const splitB = document.getElementById('splitB');
 
 function clampNum(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
 function saveUiLayout() {
   const ui = {
     sidebarW: Math.round(sidebarEl.getBoundingClientRect().width),
-    pane2dW: Math.round(pane2dEl.getBoundingClientRect().width),
   };
   try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch (e) { /* 略過寫入失敗 */ }
 }
@@ -1483,57 +1391,33 @@ function loadUiLayout() {
   if (Number.isFinite(ui.sidebarW)) {
     sidebarEl.style.width = clampNum(ui.sidebarW, 180, 500) + 'px';
   }
-  if (Number.isFinite(ui.pane2dW)) {
-    const sidebarW = sidebarEl.getBoundingClientRect().width;
-    const maxPane2d = Math.max(240, window.innerWidth - sidebarW - 240);
-    pane2dEl.style.flex = 'none';
-    pane2dEl.style.width = clampNum(ui.pane2dW, 240, maxPane2d) + 'px';
-  }
 }
 
-let uiDrag = null; // 'A'（側欄 / 工作區）或 'B'（2D / 3D）
-function startUiDrag(kind, splitter, evt) {
-  uiDrag = kind;
-  splitter.classList.add('dragging');
+let uiDrag = false; // 側欄分隔條拖曳中
+splitA.addEventListener('pointerdown', (evt) => {
+  uiDrag = true;
+  splitA.classList.add('dragging');
   document.body.style.userSelect = 'none';
-  splitter.setPointerCapture(evt.pointerId);
+  splitA.setPointerCapture(evt.pointerId);
   evt.preventDefault();
-}
-function endUiDrag(splitter) {
-  if (!uiDrag) return;
-  uiDrag = null;
-  splitter.classList.remove('dragging');
-  document.body.style.userSelect = '';
-  saveUiLayout();
-}
-
-splitA.addEventListener('pointerdown', (evt) => startUiDrag('A', splitA, evt));
+});
 splitA.addEventListener('pointermove', (evt) => {
-  if (uiDrag !== 'A') return;
+  if (!uiDrag) return;
   evt.preventDefault();
   sidebarEl.style.width = clampNum(evt.clientX, 180, 500) + 'px';
 });
-splitA.addEventListener('pointerup', () => endUiDrag(splitA));
-
-splitB.addEventListener('pointerdown', (evt) => startUiDrag('B', splitB, evt));
-splitB.addEventListener('pointermove', (evt) => {
-  if (uiDrag !== 'B') return;
-  evt.preventDefault();
-  const leftEdge = pane2dEl.getBoundingClientRect().left;
-  const maxW = Math.max(240, window.innerWidth - sidebarEl.getBoundingClientRect().width - 240);
-  pane2dEl.style.flex = 'none';
-  pane2dEl.style.width = clampNum(evt.clientX - leftEdge, 240, maxW) + 'px';
+splitA.addEventListener('pointerup', () => {
+  if (!uiDrag) return;
+  uiDrag = false;
+  splitA.classList.remove('dragging');
+  document.body.style.userSelect = '';
+  saveUiLayout();
 });
-splitB.addEventListener('pointerup', () => endUiDrag(splitB));
 
-/* ================= 手機版 UI（側欄抽屜、2D/3D 切換） ================= */
-const workspaceEl = document.getElementById('workspace');
+/* ================= 手機版 UI（側欄抽屜） ================= */
 const menuBtn = document.getElementById('menuBtn');
 const drawerBackdrop = document.getElementById('drawerBackdrop');
-const viewToggle = document.getElementById('viewToggle');
 const mobileMq = window.matchMedia('(max-width: 768px)');
-
-workspaceEl.dataset.view = '2d';
 
 function openDrawer() {
   sidebarEl.classList.add('open');
@@ -1548,21 +1432,11 @@ menuBtn.addEventListener('click', () => {
 });
 drawerBackdrop.addEventListener('click', closeDrawer);
 
-viewToggle.addEventListener('click', (evt) => {
-  const btn = evt.target.closest('button[data-view]');
-  if (!btn) return;
-  workspaceEl.dataset.view = btn.dataset.view;
-  viewToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
-  resize3d();
-});
-
 /* 手機模式：桌面版拖拉分隔條留下的 inline 寬度會蓋掉手機版抽屜寬度，進入手機模式時清掉；
    回到桌面模式時，把 inline 寬度依 localStorage 存的版面設定還原 */
 function enterMobileMode() {
   closeDrawer();
   sidebarEl.style.width = '';
-  pane2dEl.style.flex = '';
-  pane2dEl.style.width = '';
 }
 function exitMobileMode() {
   closeDrawer();
@@ -1575,12 +1449,12 @@ mobileMq.addEventListener('change', (evt) => {
 
 /* ================= main update ================= */
 function update() {
-  const elevations = computeElevations(); // 每次 update 只算一次，2D / 3D / 統計共用
-  render2d(elevations);
+  const elevations = computeElevations(); // 每次 update 只算一次，3D / 統計 / 旋轉把手共用
   renderStats(elevations);
   build3dTable();
   build3dItems(elevations);
   buildFigure();
+  buildRotHandle(elevations);
   applyCamera();
 }
 

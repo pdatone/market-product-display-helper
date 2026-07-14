@@ -18,10 +18,7 @@
 ## 開始使用
 
 ### 方法一：直接在線上使用
-
-```
-https://pdatone.github.io/market-product-display-helper/
-```
+前往 https://pdatone.github.io/market-product-display-helper/
 
 ### 方法二：下載到自己電腦執行
 

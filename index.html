@@ -136,7 +136,14 @@
     flex-direction: column;
     min-width: 0;
   }
-  .pane + .pane { border-left: 1px solid var(--line); }
+  .splitter {
+    flex: none;
+    width: 6px;
+    background: var(--line);
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .splitter:hover, .splitter.dragging { background: var(--accent); }
   .pane .pane-head {
     flex: none;
     display: flex;
@@ -151,7 +158,7 @@
   .pane .pane-head .title { font-weight: 600; letter-spacing: 1px; }
   .pane .pane-body { flex: 1; min-height: 0; position: relative; }
   #svg2d { width: 100%; height: 100%; display: block; touch-action: none; }
-  #canvas3dWrap { width: 100%; height: 100%; }
+  #canvas3dWrap { width: 100%; height: 100%; touch-action: none; }
   #canvas3dWrap canvas { display: block; }
   #toolbar2d { margin-left: auto; display: flex; gap: 6px; }
   select {
@@ -159,6 +166,48 @@
     border: 1px solid var(--line); border-radius: 6px; background: #fff;
   }
   .kbd-hint { font-size: 11px; color: var(--muted); }
+  /* ---- mobile drawer / view toggle (hidden on desktop) ---- */
+  #menuBtn {
+    display: none;
+    position: fixed; left: 12px; bottom: 12px; z-index: 31;
+    width: 48px; height: 48px; border-radius: 50%;
+    align-items: center; justify-content: center;
+    font-size: 20px; line-height: 1;
+    background: var(--accent); color: #fff; border: none;
+    box-shadow: 0 2px 10px rgba(0,0,0,.3);
+  }
+  #drawerBackdrop {
+    display: none;
+    position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 29;
+  }
+  #viewToggle {
+    display: none;
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 20;
+    gap: 2px; padding: 3px; border-radius: 999px;
+    background: var(--panel); box-shadow: 0 2px 8px rgba(0,0,0,.2);
+  }
+  #viewToggle button {
+    border: none; border-radius: 999px; padding: 6px 16px; font-size: 13px;
+    background: transparent; color: var(--ink);
+  }
+  #viewToggle button.active { background: var(--accent); color: #fff; }
+  @media (max-width: 768px) {
+    header .hint { display: none; }
+    header h1 { font-size: 14px; }
+    #splitA, #splitB { display: none; }
+    #sidebar {
+      position: fixed; top: 0; left: 0; bottom: 0;
+      width: 85vw; max-width: 320px; z-index: 30;
+      transform: translateX(-100%);
+      transition: transform .25s ease;
+      box-shadow: 2px 0 14px rgba(0,0,0,.3);
+    }
+    #sidebar.open { transform: translateX(0); }
+    #menuBtn { display: flex; }
+    #viewToggle { display: flex; }
+    #workspace[data-view="2d"] #pane3d { display: none; }
+    #workspace[data-view="3d"] #pane2d { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -174,6 +223,16 @@
       <div class="field-row"><label>深</label><input type="number" id="tableD" min="20" max="300" step="1"></div>
       <div class="field-row"><label>高</label><input type="number" id="tableH" min="20" max="150" step="1"></div>
       <button class="primary" id="applyTable" style="width:100%">套用桌子尺寸</button>
+    </section>
+    <section>
+      <h2>場景</h2>
+      <div class="field-row"><label>背景</label><input type="color" id="scBg"></div>
+      <div class="field-row"><label>桌布</label><input type="color" id="scCloth"></div>
+      <div class="field-row"><label>下擺</label><input type="number" id="scDrop" min="0" step="1" title="桌布下擺長度（cm）"></div>
+      <div class="field-row"><label>人偶</label>
+        <input type="checkbox" id="scFigOn" style="flex:none">
+        <input type="number" id="scFigH" min="100" max="210" step="1" title="身高（cm）">
+      </div>
     </section>
     <section>
       <h2>物件庫</h2>
@@ -213,15 +272,11 @@
     </section>
   </div>
 
+  <div class="splitter" id="splitA"></div>
   <div id="workspace">
-    <div class="pane">
+    <div class="pane" id="pane2d">
       <div class="pane-head">
         <span class="title">2D 俯視圖</span>
-        <span>吸附</span>
-        <select id="snapSel">
-          <option value="1">1 cm</option>
-          <option value="5" selected>5 cm</option>
-        </select>
         <div id="toolbar2d">
           <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:4px;">角度
             <input type="number" id="rotInput" min="0" max="359" step="1" style="width:60px; font-family:inherit; font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;" disabled>
@@ -235,7 +290,8 @@
         <svg id="svg2d" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
     </div>
-    <div class="pane">
+    <div class="splitter" id="splitB"></div>
+    <div class="pane" id="pane3d">
       <div class="pane-head">
         <span class="title">3D 預覽</span>
         <span class="kbd-hint">拖曳＝旋轉視角，滾輪＝縮放</span>
@@ -244,6 +300,13 @@
     </div>
   </div>
 </main>
+
+<button id="menuBtn" title="開啟選單">☰</button>
+<div id="drawerBackdrop"></div>
+<div id="viewToggle">
+  <button data-view="2d" class="active">2D</button>
+  <button data-view="3d">3D</button>
+</div>
 
 <script type="module">
 import * as THREE from './vendor/three.module.js';
@@ -264,6 +327,7 @@ const DEFAULT_STATE = {
   ],
   placed: [],   // { id, itemId, cx, cy, rot }  cx/cy = 中心點（cm），rot = 任意角度（度，0–360，浮點數）
   nextId: 100,
+  scene: { bg: '#e2e8dc', clothColor: '#eef1e6', clothDrop: 20, figureOn: false, figureH: 165 },
 };
 
 let state = loadState();
@@ -277,6 +341,8 @@ function loadState() {
     if (raw) s = JSON.parse(raw);
   } catch (e) { /* 壞資料直接重來 */ }
   if (!s) return structuredClone(DEFAULT_STATE);
+  // 舊存檔沒有場景設定（背景／桌布／人偶）時補上預設值
+  if (!s.scene) s.scene = structuredClone(DEFAULT_STATE.scene);
   // 舊存檔沒有的新預設道具（階梯、洞洞板）補進物件庫
   for (const def of DEFAULT_STATE.library) {
     if (def.shape && !s.library.some(i => i.shape === def.shape)) {
@@ -430,7 +496,7 @@ function render2d(elevations) {
   svg.innerHTML = '';
 
   // 桌面
-  const tbl = el('rect', { x: 0, y: 0, width: w, height: d, fill: '#f8faf4', stroke: '#9dab94', 'stroke-width': 0.6, rx: 1 });
+  const tbl = el('rect', { x: 0, y: 0, width: w, height: d, fill: tint(state.scene.clothColor, 0.75), stroke: '#9dab94', 'stroke-width': 0.6, rx: 1 });
   svg.appendChild(tbl);
 
   // 格線（5cm）
@@ -520,6 +586,12 @@ function render2d(elevations) {
   }
 }
 
+/* 顏色往白色混合（f = 混入白色的比例，0~1），用來把桌布色淡化成桌面底色 */
+function tint(hex, f) {
+  const c = new THREE.Color(hex);
+  const mix = (v) => Math.round((v * (1 - f) + 1 * f) * 255);
+  return `rgb(${mix(c.r)}, ${mix(c.g)}, ${mix(c.b)})`;
+}
 function el(tag, attrs) {
   const n = document.createElementNS(SVGNS, tag);
   for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
@@ -579,7 +651,7 @@ svg.addEventListener('pointermove', (evt) => {
   const p = state.placed.find(q => q.id === drag.id);
   if (!p) return;
   const pt = svgPoint(evt);
-  const snap = Number(document.getElementById('snapSel').value);
+  const snap = 1;
   p.cx = Math.round((pt.x + drag.dx) / snap) * snap;
   p.cy = Math.round((pt.y + drag.dy) / snap) * snap;
   drag.moved = true;
@@ -658,6 +730,12 @@ function renderSidebar() {
   document.getElementById('tableD').value = state.table.d;
   document.getElementById('tableH').value = state.table.h;
 
+  document.getElementById('scBg').value = state.scene.bg;
+  document.getElementById('scCloth').value = state.scene.clothColor;
+  document.getElementById('scDrop').value = state.scene.clothDrop;
+  document.getElementById('scFigOn').checked = state.scene.figureOn;
+  document.getElementById('scFigH').value = state.scene.figureH;
+
   const list = document.getElementById('libList');
   list.innerHTML = '';
   for (const it of state.library) {
@@ -729,6 +807,31 @@ document.getElementById('applyTable').addEventListener('click', () => {
     state.table = { w, d, h };
     saveState(); update(); rebuild3dCamera();
   }
+});
+
+/* --- 場景（背景／桌布／人偶） --- */
+document.getElementById('scBg').addEventListener('input', (evt) => {
+  state.scene.bg = evt.target.value;
+  saveState();
+  applySceneColors();
+});
+document.getElementById('scCloth').addEventListener('input', (evt) => {
+  state.scene.clothColor = evt.target.value;
+  saveState(); update();
+});
+document.getElementById('scDrop').addEventListener('input', (evt) => {
+  const v = Math.max(0, Math.min(state.table.h, Number(evt.target.value) || 0));
+  state.scene.clothDrop = v;
+  saveState(); update();
+});
+document.getElementById('scFigOn').addEventListener('change', (evt) => {
+  state.scene.figureOn = evt.target.checked;
+  saveState(); update();
+});
+document.getElementById('scFigH').addEventListener('input', (evt) => {
+  const v = Math.max(100, Math.min(210, Number(evt.target.value) || 165));
+  state.scene.figureH = v;
+  saveState(); update();
 });
 
 /* 依形狀切換表單相依 UI：層數列顯隱、深度欄位鎖定（洞洞板固定深 2cm） */
@@ -816,7 +919,6 @@ document.getElementById('clearTable').addEventListener('click', () => {
   saveState();
 });
 
-document.getElementById('snapSel').addEventListener('change', () => {});
 document.getElementById('niShape').addEventListener('change', (evt) => {
   syncShapeUI(evt.target.value);
 });
@@ -845,7 +947,13 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 wrap.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#e2e8dc');
+scene.background = new THREE.Color(state.scene.bg);
+
+/* 顏色調暗（f = 各色版乘上的係數，f<1 變暗），用來讓地面比背景色略深 */
+function shade(hex, f) {
+  const c = new THREE.Color(hex);
+  return new THREE.Color(c.r * f, c.g * f, c.b * f);
+}
 
 const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
 
@@ -862,9 +970,17 @@ const ground = new THREE.Mesh(
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 
+/* 依場景設定套用背景色與地面色（地面比背景略深，帶出立體感） */
+function applySceneColors() {
+  scene.background.set(state.scene.bg);
+  ground.material.color.copy(shade(state.scene.bg, 0.85));
+  applyCamera();
+}
+
 let tableGroup = new THREE.Group();
 let itemGroup = new THREE.Group();
-scene.add(tableGroup, itemGroup);
+let figureGroup = new THREE.Group();
+scene.add(tableGroup, itemGroup, figureGroup);
 
 function build3dTable() {
   disposeGroup(tableGroup);
@@ -882,13 +998,27 @@ function build3dTable() {
     leg.position.set(sx * lx, (h - topThick) / 2, sz * lz);
     tableGroup.add(leg);
   }
-  // 桌布感：桌面上薄薄一層
-  const cloth = new THREE.Mesh(
-    new THREE.BoxGeometry(w + 2, 0.5, d + 2),
-    new THREE.MeshLambertMaterial({ color: '#eef1e6' })
-  );
+  // 桌布：頂布 + 四邊裙擺（下擺長度由 state.scene.clothDrop 決定，不超過桌高）
+  const clothMat = new THREE.MeshLambertMaterial({ color: state.scene.clothColor });
+  const cloth = new THREE.Mesh(new THREE.BoxGeometry(w + 4, 0.5, d + 4), clothMat);
   cloth.position.y = h + 0.25;
   tableGroup.add(cloth);
+  const drop = Math.min(state.scene.clothDrop, h);
+  if (drop > 0) {
+    const skirtY = h + 0.5 - drop / 2;
+    const front = new THREE.Mesh(new THREE.BoxGeometry(w + 4, drop, 0.5), clothMat);
+    front.position.set(0, skirtY, d / 2 + 1.75);
+    tableGroup.add(front);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(w + 4, drop, 0.5), clothMat);
+    back.position.set(0, skirtY, -(d / 2 + 1.75));
+    tableGroup.add(back);
+    const right = new THREE.Mesh(new THREE.BoxGeometry(0.5, drop, d + 4), clothMat);
+    right.position.set(w / 2 + 1.75, skirtY, 0);
+    tableGroup.add(right);
+    const left = new THREE.Mesh(new THREE.BoxGeometry(0.5, drop, d + 4), clothMat);
+    left.position.set(-(w / 2 + 1.75), skirtY, 0);
+    tableGroup.add(left);
+  }
 }
 
 function build3dItems(elevations) {
@@ -907,6 +1037,93 @@ function build3dItems(elevations) {
     g.position.set(p.cx - w / 2, h + 0.5 + z, p.cy - d / 2);
     g.rotation.y = -p.rot * Math.PI / 180;
     itemGroup.add(g);
+  }
+}
+
+/* 素描木人偶（artist mannequin），比例依 state.scene.figureH 換算，位置固定站在桌前 40cm 的地面上 */
+function buildFigure() {
+  disposeGroup(figureGroup);
+  figureGroup.position.set(0, 0, state.table.d / 2 + 40);
+  if (!state.scene.figureOn) return;
+  const H = state.scene.figureH;
+  const bodyMat = new THREE.MeshLambertMaterial({ color: '#d8d5cf' });
+  const jointMat = new THREE.MeshLambertMaterial({ color: '#c2beb6' });
+
+  // 四肢圓柱：靠近軀幹端（rTrunkEnd）較粗，遠端（rFarEnd）較細；yFar/yTrunk 為兩端關節球中心高度
+  function limb(rTrunkEnd, rFarEnd, yFar, yTrunk, x) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rTrunkEnd, rFarEnd, yTrunk - yFar, 10), bodyMat);
+    m.position.set(x, (yTrunk + yFar) / 2, 0);
+    figureGroup.add(m);
+  }
+  // 關節球
+  function ball(r, y, x = 0, z = 0) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), jointMat);
+    m.position.set(x, y, z);
+    figureGroup.add(m);
+  }
+  // 胸腔／骨盆用的壓扁塊體（rTop/rBottom 決定上下寬窄，scale.z 壓成橢圓斷面）
+  function torsoBlock(rTop, rBottom, yBottom, yTop) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, yTop - yBottom, 16), bodyMat);
+    m.scale.z = 0.6;
+    m.position.y = (yTop + yBottom) / 2;
+    figureGroup.add(m);
+  }
+
+  // ---- 腿部（胯部高約 H*0.5，雙腿微開站立） ----
+  const hipY = H * 0.5;
+  const kneeY = H * 0.26;
+  const ankleY = H * 0.045;
+  const hipHalfW = H * 0.10;
+  for (const sx of [1, -1]) {
+    const x = sx * hipHalfW;
+    // 腳：前後拉長、壓扁的橢圓，往桌子方向（-z）伸出
+    const foot = new THREE.Mesh(new THREE.SphereGeometry(H * 0.045, 12, 10), bodyMat);
+    foot.scale.set(0.8, 0.4, 1.7);
+    foot.position.set(x, H * 0.018, -H * 0.045);
+    figureGroup.add(foot);
+    ball(H * 0.018, ankleY, x);                       // 踝關節
+    limb(H * 0.019, H * 0.014, ankleY, kneeY, x);      // 小腿（膝端較粗）
+    ball(H * 0.02, kneeY, x);                          // 膝關節
+    limb(H * 0.026, H * 0.02, kneeY, hipY, x);         // 大腿（髖端較粗）
+    ball(H * 0.026, hipY, x);                          // 髖關節
+  }
+
+  // ---- 骨盆（上窄下寬） ----
+  const pelvisTopY = hipY + H * 0.09;
+  torsoBlock(H * 0.065, H * 0.10, hipY, pelvisTopY);
+  ball(H * 0.028, pelvisTopY);                          // 腰關節
+
+  // ---- 頭（蛋形：sphere 拉長 scale.y） ----
+  const headLen = H / 7;
+  const headR = headLen / 2.6;
+  const headBottomY = H - headLen;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(headR, 16, 12), bodyMat);
+  head.scale.y = 1.3;
+  head.position.y = headBottomY + 1.3 * headR;
+  figureGroup.add(head);
+
+  // ---- 胸腔（上寬下窄） ----
+  const torsoTopY = headBottomY; // 與頸關節／頭部底端銜接
+  torsoBlock(H * 0.115, H * 0.075, pelvisTopY, torsoTopY);
+  ball(headR * 0.45, headBottomY);                      // 頸關節
+
+  // ---- 手臂（肩寬約 H*0.24，自然下垂身體兩側） ----
+  const shoulderHalfW = H * 0.12;
+  const shoulderY = torsoTopY;
+  const elbowY = shoulderY - H * 0.19;
+  const wristY = elbowY - H * 0.16;
+  for (const sx of [1, -1]) {
+    const x = sx * shoulderHalfW;
+    ball(H * 0.03, shoulderY, x);                       // 肩關節
+    limb(H * 0.026, H * 0.019, elbowY, shoulderY, x);   // 上臂（肩端較粗）
+    ball(H * 0.02, elbowY, x);                          // 肘關節
+    limb(H * 0.018, H * 0.012, wristY, elbowY, x);      // 前臂（肘端較粗）
+    ball(H * 0.014, wristY, x);                         // 腕關節
+    // 手：小的扁橢圓
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(H * 0.045, 10, 8), jointMat);
+    hand.scale.set(0.6, 0.85, 0.35);
+    hand.position.set(x, wristY - H * 0.045, 0);
+    figureGroup.add(hand);
   }
 }
 
@@ -993,18 +1210,64 @@ function applyCamera() {
   renderer.render(scene, camera);
 }
 let orbitDrag = null;
+/* 多指觸控支援：activePointers 追蹤所有目前按下的指標（單指旋轉／雙指捏合縮放） */
+const activePointers = new Map(); // pointerId -> { x, y }
+let pinchStart = null; // { dist } 雙指開始捏合時的距離與 orbit.dist
+
+function pointA() { return [...activePointers.values()][0]; }
+function pointB() { return [...activePointers.values()][1]; }
+function pinchDist() {
+  const a = pointA(), b = pointB();
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
 renderer.domElement.addEventListener('pointerdown', (evt) => {
-  orbitDrag = { x: evt.clientX, y: evt.clientY };
+  activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
   renderer.domElement.setPointerCapture(evt.pointerId);
+  if (activePointers.size === 1) {
+    orbitDrag = { x: evt.clientX, y: evt.clientY };
+    pinchStart = null;
+  } else if (activePointers.size === 2) {
+    orbitDrag = null; // 雙指時停止旋轉，改走捏合縮放
+    pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
+  }
 });
 renderer.domElement.addEventListener('pointermove', (evt) => {
+  if (!activePointers.has(evt.pointerId)) return;
+  activePointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+  if (activePointers.size >= 2) {
+    if (!pinchStart) pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
+    const d = pinchDist();
+    if (d > 0) {
+      orbit.dist = Math.min(1500, Math.max(60, pinchStart.orbitDist * (pinchStart.dist / d)));
+      applyCamera();
+    }
+    return;
+  }
   if (!orbitDrag) return;
   orbit.theta -= (evt.clientX - orbitDrag.x) * 0.006;
   orbit.phi = Math.min(Math.PI / 2.05, Math.max(0.15, orbit.phi - (evt.clientY - orbitDrag.y) * 0.006));
   orbitDrag = { x: evt.clientX, y: evt.clientY };
   applyCamera();
 });
-renderer.domElement.addEventListener('pointerup', () => { orbitDrag = null; });
+function releasePointer(evt) {
+  activePointers.delete(evt.pointerId);
+  if (activePointers.size >= 2) {
+    // 仍有兩指以上：以剩下的兩指重設捏合起點，避免跳動
+    pinchStart = { dist: pinchDist(), orbitDist: orbit.dist };
+    orbitDrag = null;
+  } else if (activePointers.size === 1) {
+    // 從雙指回到單指：以剩下那指的目前座標重設旋轉起點，避免跳動
+    const p = pointA();
+    orbitDrag = { x: p.x, y: p.y };
+    pinchStart = null;
+  } else {
+    orbitDrag = null;
+    pinchStart = null;
+  }
+}
+renderer.domElement.addEventListener('pointerup', releasePointer);
+renderer.domElement.addEventListener('pointercancel', releasePointer);
 renderer.domElement.addEventListener('wheel', (evt) => {
   evt.preventDefault();
   orbit.dist = Math.min(1500, Math.max(60, orbit.dist * (evt.deltaY > 0 ? 1.08 : 0.93)));
@@ -1021,6 +1284,123 @@ function resize3d() {
 }
 new ResizeObserver(resize3d).observe(wrap);
 
+/* ================= 版面分隔條（側欄／2D／3D 可拖拉調整寬度） ================= */
+const UI_KEY = 'market-display-ui';
+const sidebarEl = document.getElementById('sidebar');
+const pane2dEl = document.getElementById('pane2d');
+const splitA = document.getElementById('splitA');
+const splitB = document.getElementById('splitB');
+
+function clampNum(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+function saveUiLayout() {
+  const ui = {
+    sidebarW: Math.round(sidebarEl.getBoundingClientRect().width),
+    pane2dW: Math.round(pane2dEl.getBoundingClientRect().width),
+  };
+  try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch (e) { /* 略過寫入失敗 */ }
+}
+
+function loadUiLayout() {
+  let ui = null;
+  try {
+    const raw = localStorage.getItem(UI_KEY);
+    if (raw) ui = JSON.parse(raw);
+  } catch (e) { /* 壞資料直接忽略，維持預設版面 */ }
+  if (!ui) return;
+  if (Number.isFinite(ui.sidebarW)) {
+    sidebarEl.style.width = clampNum(ui.sidebarW, 180, 500) + 'px';
+  }
+  if (Number.isFinite(ui.pane2dW)) {
+    const sidebarW = sidebarEl.getBoundingClientRect().width;
+    const maxPane2d = Math.max(240, window.innerWidth - sidebarW - 240);
+    pane2dEl.style.flex = 'none';
+    pane2dEl.style.width = clampNum(ui.pane2dW, 240, maxPane2d) + 'px';
+  }
+}
+
+let uiDrag = null; // 'A'（側欄 / 工作區）或 'B'（2D / 3D）
+function startUiDrag(kind, splitter, evt) {
+  uiDrag = kind;
+  splitter.classList.add('dragging');
+  document.body.style.userSelect = 'none';
+  splitter.setPointerCapture(evt.pointerId);
+  evt.preventDefault();
+}
+function endUiDrag(splitter) {
+  if (!uiDrag) return;
+  uiDrag = null;
+  splitter.classList.remove('dragging');
+  document.body.style.userSelect = '';
+  saveUiLayout();
+}
+
+splitA.addEventListener('pointerdown', (evt) => startUiDrag('A', splitA, evt));
+splitA.addEventListener('pointermove', (evt) => {
+  if (uiDrag !== 'A') return;
+  evt.preventDefault();
+  sidebarEl.style.width = clampNum(evt.clientX, 180, 500) + 'px';
+});
+splitA.addEventListener('pointerup', () => endUiDrag(splitA));
+
+splitB.addEventListener('pointerdown', (evt) => startUiDrag('B', splitB, evt));
+splitB.addEventListener('pointermove', (evt) => {
+  if (uiDrag !== 'B') return;
+  evt.preventDefault();
+  const leftEdge = pane2dEl.getBoundingClientRect().left;
+  const maxW = Math.max(240, window.innerWidth - sidebarEl.getBoundingClientRect().width - 240);
+  pane2dEl.style.flex = 'none';
+  pane2dEl.style.width = clampNum(evt.clientX - leftEdge, 240, maxW) + 'px';
+});
+splitB.addEventListener('pointerup', () => endUiDrag(splitB));
+
+/* ================= 手機版 UI（側欄抽屜、2D/3D 切換） ================= */
+const workspaceEl = document.getElementById('workspace');
+const menuBtn = document.getElementById('menuBtn');
+const drawerBackdrop = document.getElementById('drawerBackdrop');
+const viewToggle = document.getElementById('viewToggle');
+const mobileMq = window.matchMedia('(max-width: 768px)');
+
+workspaceEl.dataset.view = '2d';
+
+function openDrawer() {
+  sidebarEl.classList.add('open');
+  drawerBackdrop.style.display = 'block';
+}
+function closeDrawer() {
+  sidebarEl.classList.remove('open');
+  drawerBackdrop.style.display = 'none';
+}
+menuBtn.addEventListener('click', () => {
+  sidebarEl.classList.contains('open') ? closeDrawer() : openDrawer();
+});
+drawerBackdrop.addEventListener('click', closeDrawer);
+
+viewToggle.addEventListener('click', (evt) => {
+  const btn = evt.target.closest('button[data-view]');
+  if (!btn) return;
+  workspaceEl.dataset.view = btn.dataset.view;
+  viewToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+  resize3d();
+});
+
+/* 手機模式：桌面版拖拉分隔條留下的 inline 寬度會蓋掉手機版抽屜寬度，進入手機模式時清掉；
+   回到桌面模式時，把 inline 寬度依 localStorage 存的版面設定還原 */
+function enterMobileMode() {
+  closeDrawer();
+  sidebarEl.style.width = '';
+  pane2dEl.style.flex = '';
+  pane2dEl.style.width = '';
+}
+function exitMobileMode() {
+  closeDrawer();
+  loadUiLayout();
+  resize3d();
+}
+mobileMq.addEventListener('change', (evt) => {
+  if (evt.matches) enterMobileMode(); else exitMobileMode();
+});
+
 /* ================= main update ================= */
 function update() {
   const elevations = computeElevations(); // 每次 update 只算一次，2D / 3D / 統計共用
@@ -1028,12 +1408,16 @@ function update() {
   renderStats(elevations);
   build3dTable();
   build3dItems(elevations);
+  buildFigure();
   applyCamera();
   syncRotInput();
 }
 
 renderSidebar();
+applySceneColors();
 rebuild3dCamera();
+loadUiLayout();
+if (mobileMq.matches) enterMobileMode();
 resize3d();
 update();
 </script>

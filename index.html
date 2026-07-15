@@ -246,7 +246,7 @@
 <body>
 <header>
   <h1>🧱 市集擺攤陳列模擬器</h1>
-  <span class="hint">左側建立物件 → 加入桌面 → 直接在 3D 視口擺放：左鍵＝選取／拖曳物件，右鍵（空白）＝旋轉視角，右鍵（選取物件）＝旋轉物件，中鍵＝平移，滾輪＝縮放；觸控：點物件後按住左右滑＝旋轉，按空白處滑動＝移動</span>
+  <span class="hint">左側建立物件 → 加入桌面 → 直接在 3D 視口擺放：左鍵＝選取／拖曳物件，右鍵（空白）＝旋轉視角，右鍵（選取物件）＝旋轉物件，中鍵＝平移，滾輪＝縮放；觸控：點一下選取物件，再按住已選取物件左右滑＝旋轉，按空白處滑動＝移動</span>
 </header>
 <main>
   <div id="sidebar">
@@ -1282,7 +1282,7 @@ document.getElementById('btnViewFront').addEventListener('click', viewFront);
 
 /* ================= 3D 視口互動 =================
    左鍵＝選取／拖曳物件（含人偶），右鍵＝旋轉視角（OrbitControls）／旋轉已選取物件或人偶，中鍵＝平移，滾輪＝縮放；
-   觸控：單指按物件＝選取，按住左右滑＝旋轉該物件；已選取物件時按住空白處滑動＝移動該物件；
+   觸控：單指點物件＝選取，再按住已選取的物件左右滑＝旋轉該物件；已選取物件時按住空白處滑動＝移動該物件；
    未選取任何物件時按空白＝旋轉視角（OrbitControls 接手）、雙指＝縮放／平移（OrbitControls） */
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
@@ -1352,12 +1352,17 @@ function beginPrimary(evt) {
     if (placedId != null) break;
   }
   if (placedId != null) {
+    const wasSelected = placedId === selectedId;
     select(placedId);
     if (isTouch) {
-      // 觸控：按住物件左右滑＝旋轉（不進入拖曳移動），邏輯與右鍵旋轉相同但吸附角度不同
-      const p = state.placed.find(q => q.id === placedId);
-      drag3d = { mode: 'touchrot', pointerId: evt.pointerId, id: placedId, startX: evt.clientX, startRot: p.rot, moved: false };
-      controls.enabled = false;
+      if (wasSelected) {
+        // 觸控：按住已選取的物件左右滑＝旋轉（不進入拖曳移動），邏輯與右鍵旋轉相同但吸附角度不同
+        const p = state.placed.find(q => q.id === placedId);
+        drag3d = { mode: 'touchrot', pointerId: evt.pointerId, id: placedId, startX: evt.clientX, startRot: p.rot, moved: false };
+        controls.enabled = false;
+        return true;
+      }
+      // 第一次點＝只選取，滑動交給 OrbitControls 旋轉視角；再按住已選取物件才旋轉
       return true;
     }
     // 不立刻進入拖曳，先記錄 pendingDrag；實際移動等 pointermove 超過門檻再啟動

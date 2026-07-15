@@ -246,7 +246,7 @@
 <body>
 <header>
   <h1>🧱 市集擺攤陳列模擬器</h1>
-  <span class="hint">左側建立物件 → 加入桌面 → 直接在 3D 視口擺放：左鍵＝選取／拖曳物件，右鍵（空白）＝旋轉視角，右鍵（選取物件）＝旋轉物件，中鍵＝平移，滾輪＝縮放</span>
+  <span class="hint">左側建立物件 → 加入桌面 → 直接在 3D 視口擺放：左鍵＝選取／拖曳物件，右鍵（空白）＝旋轉視角，右鍵（選取物件）＝旋轉物件，中鍵＝平移，滾輪＝縮放；觸控：點物件後按住左右滑＝旋轉，按空白處滑動＝移動</span>
 </header>
 <main>
   <div id="sidebar">
@@ -962,9 +962,8 @@ function applySceneColors() {
 let tableGroup = new THREE.Group();
 let itemGroup = new THREE.Group();
 let figureGroup = new THREE.Group();
-let handleGroup = new THREE.Group(); // 選取物件的旋轉把手（虛線＋小球）
 let dimGroup = new THREE.Group(); // 選取物件的寬／高／深彩色標示棒
-scene.add(tableGroup, itemGroup, figureGroup, handleGroup, dimGroup);
+scene.add(tableGroup, itemGroup, figureGroup, dimGroup);
 
 function build3dTable() {
   disposeGroup(tableGroup);
@@ -1222,47 +1221,6 @@ function disposeGroup(g) {
   g.clear();
 }
 
-/* --- 選取物件的旋轉把手（移植自 2D 版：中心往局部 -z 伸出虛線，末端小球可拖曳旋轉） --- */
-let rotHandleInfo = null; // { id, y }：把手對應的擺放物 id 與把手所在水平面高度（世界座標）
-function buildRotHandle(elevations) {
-  disposeGroup(handleGroup);
-  rotHandleInfo = null;
-  const p = state.placed.find(q => q.id === selectedId);
-  const it = p ? effItem(p) : null;
-  if (!p || !it) return;
-  const { w, d, h } = state.table;
-  // 把手放在物件底面略上方（+1cm），rot=0 時指向局部 -z（顧客側的反方向，即桌子後側）
-  const y = h + clothOffsetY() + (elevations.get(p.id) || 0) + 1;
-  handleGroup.position.set(p.cx - w / 2, y, p.cy - d / 2);
-  handleGroup.rotation.y = -p.rot * Math.PI / 180;
-  const len = it.d / 2 + 6; // 距物件中心的距離（同 2D 版：d/2 + 6cm）
-  // 虛線：物件中心 → 把手
-  const lineGeo = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -len),
-  ]);
-  // 把手屬於編輯 gizmo，關閉深度測試讓它永遠畫在最上層，不被物件本身擋住
-  const line = new THREE.Line(lineGeo, new THREE.LineDashedMaterial({ color: 0x39423a, dashSize: 1.5, gapSize: 1.2, depthTest: false }));
-  line.computeLineDistances();
-  line.renderOrder = 10;
-  handleGroup.add(line);
-  // 小球本體
-  const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(2.5, 16, 12),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x39423a, emissiveIntensity: 0.2, depthTest: false })
-  );
-  ball.position.set(0, 0, -len);
-  ball.renderOrder = 11;
-  handleGroup.add(ball);
-  // 較大的透明命中球，讓滑鼠／手指好點一點（raycast 仍會命中透明材質）
-  const hit = new THREE.Mesh(
-    new THREE.SphereGeometry(5, 8, 6),
-    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
-  );
-  hit.position.set(0, 0, -len);
-  handleGroup.add(hit);
-  rotHandleInfo = { id: p.id, y };
-}
-
 /* --- 選取物件的寬／高／深彩色標示棒（顏色與尺寸卡片同源：DIM_COLORS） --- */
 function buildDimIndicator(elevations) {
   disposeGroup(dimGroup);
@@ -1323,8 +1281,9 @@ document.getElementById('btnViewTop').addEventListener('click', viewTop);
 document.getElementById('btnViewFront').addEventListener('click', viewFront);
 
 /* ================= 3D 視口互動 =================
-   左鍵＝選取／拖曳物件（含旋轉把手、人偶），右鍵＝旋轉視角（OrbitControls），中鍵＝平移，滾輪＝縮放；
-   觸控：單指按物件＝拖曳、按空白＝旋轉視角（OrbitControls 接手）、雙指＝縮放／平移（OrbitControls） */
+   左鍵＝選取／拖曳物件（含人偶），右鍵＝旋轉視角（OrbitControls）／旋轉已選取物件或人偶，中鍵＝平移，滾輪＝縮放；
+   觸控：單指按物件＝選取，按住左右滑＝旋轉該物件；已選取物件時按住空白處滑動＝移動該物件；
+   未選取任何物件時按空白＝旋轉視角（OrbitControls 接手）、雙指＝縮放／平移（OrbitControls） */
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 /* 依滑鼠事件位置設定 raycaster 的射線 */
@@ -1352,11 +1311,21 @@ function findPlacedId(obj) {
   return null;
 }
 
-let drag3d = null; // 物件互動中：{ mode: 'item' | 'figure' | 'rightrot', pointerId, ... }
+let drag3d = null; // 物件互動中：{ mode: 'item' | 'figure' | 'rightrot' | 'figurerot' | 'touchrot', pointerId, ... }
 let pendingDrag = null; // 左鍵按下物件但尚未超過移動門檻時的暫存資訊
 /* 觸控在空白處按下時的起點：{ pointerId, x, y, moved }，供 pointerup 判斷是否為「點一下」（未移動）以取消選取；
    有移動則代表 OrbitControls 正在接手旋轉視角，不處理 */
 let blankTouchStart = null;
+
+/* 把指定擺放物移到 state.placed 陣列尾端，提升其堆疊（渲染／遮擋判定）優先序，並存檔 */
+function bringToFront(id) {
+  const idx = state.placed.findIndex(q => q.id === id);
+  if (idx !== -1 && idx !== state.placed.length - 1) {
+    const [item] = state.placed.splice(idx, 1);
+    state.placed.push(item);
+    saveState();
+  }
+}
 
 /* 左鍵（或觸控單指）按下：依 raycast 結果進入對應模式，優先序：人偶 > 物件 > 空白；回傳是否命中互動物件 */
 function beginPrimary(evt) {
@@ -1384,6 +1353,13 @@ function beginPrimary(evt) {
   }
   if (placedId != null) {
     select(placedId);
+    if (isTouch) {
+      // 觸控：按住物件左右滑＝旋轉（不進入拖曳移動），邏輯與右鍵旋轉相同但吸附角度不同
+      const p = state.placed.find(q => q.id === placedId);
+      drag3d = { mode: 'touchrot', pointerId: evt.pointerId, id: placedId, startX: evt.clientX, startRot: p.rot, moved: false };
+      controls.enabled = false;
+      return true;
+    }
     // 不立刻進入拖曳，先記錄 pendingDrag；實際移動等 pointermove 超過門檻再啟動
     const elev = computeElevations();
     const planeY = h + clothOffsetY() + (elev.get(placedId) || 0);
@@ -1398,8 +1374,24 @@ function beginPrimary(evt) {
     }
     return true;
   }
-  // 3) 空白處：滑鼠＝取消選取（絕不旋轉視角）；觸控＝不處理，交給 OrbitControls 旋轉視角
-  if (!isTouch) select(null);
+  // 3) 空白處：滑鼠＝取消選取（絕不旋轉視角）；
+  //    觸控且已有選取物件＝按住空白處滑動可移動該物件；其餘觸控情形＝不處理，交給 OrbitControls 旋轉視角
+  if (!isTouch) { select(null); return false; }
+  if (selectedId != null) {
+    const elev = computeElevations();
+    const planeY = h + clothOffsetY() + (elev.get(selectedId) || 0);
+    const hitPt = rayHitPlaneY(planeY);
+    if (hitPt) {
+      const p = state.placed.find(q => q.id === selectedId);
+      drag3d = {
+        mode: 'item', pointerId: evt.pointerId, id: selectedId, planeY,
+        dx: p.cx - (hitPt.x + w / 2), dy: p.cy - (hitPt.z + d / 2),
+        moved: false, fromBlank: true,
+      };
+      controls.enabled = false;
+      return true;
+    }
+  }
   return false;
 }
 
@@ -1442,14 +1434,7 @@ renderer.domElement.addEventListener('pointermove', (evt) => {
     const mdx = evt.clientX - pendingDrag.startClientX;
     const mdy = evt.clientY - pendingDrag.startClientY;
     if (Math.abs(mdx) + Math.abs(mdy) > 5) {
-      const { w, d } = state.table;
-      // 移到陣列尾端提升堆疊優先序
-      const idx = state.placed.findIndex(q => q.id === pendingDrag.id);
-      if (idx !== -1 && idx !== state.placed.length - 1) {
-        const [item] = state.placed.splice(idx, 1);
-        state.placed.push(item);
-        saveState();
-      }
+      bringToFront(pendingDrag.id); // 移到陣列尾端提升堆疊優先序
       drag3d = {
         mode: 'item', pointerId: pendingDrag.pointerId, id: pendingDrag.id,
         planeY: pendingDrag.planeY, dx: pendingDrag.dx, dy: pendingDrag.dy, moved: false,
@@ -1467,9 +1452,22 @@ renderer.domElement.addEventListener('pointermove', (evt) => {
       const p = state.placed.find(q => q.id === drag3d.id);
       const hit = rayHitPlaneY(drag3d.planeY);
       if (p && hit) {
+        // 觸控從空白處開始拖曳移動選取物件：第一次真正移動時才提升堆疊優先序
+        if (!drag3d.moved && drag3d.fromBlank) bringToFront(drag3d.id);
         // 平面交點換算回桌面座標（原點在桌面左上角），1cm 吸附
         p.cx = Math.round(hit.x + w / 2 + drag3d.dx);
         p.cy = Math.round(hit.z + d / 2 + drag3d.dy);
+        drag3d.moved = true;
+        update();
+      }
+    } else if (drag3d.mode === 'touchrot') {
+      const p = state.placed.find(q => q.id === drag3d.id);
+      if (p) {
+        const dx = evt.clientX - drag3d.startX;
+        const snapDeg = 5; // 觸控沒有 Shift 精細旋轉，固定 5° 吸附
+        let angle = drag3d.startRot - dx * 0.5;
+        angle = Math.round(angle / snapDeg) * snapDeg;
+        p.rot = ((angle % 360) + 360) % 360;
         drag3d.moved = true;
         update();
       }
@@ -1516,6 +1514,7 @@ function releasePointer(evt) {
   }
   if (drag3d && drag3d.pointerId === evt.pointerId) {
     if (drag3d.moved) saveState(); // 有實際移動／旋轉才存檔
+    else if (drag3d.fromBlank) select(null); // 觸控點空白但沒滑動＝取消選取（原本 tap 空白取消選取的體驗）
     drag3d = null;
     controls.enabled = true;
   }
@@ -1633,7 +1632,6 @@ function update() {
   build3dTable();
   build3dItems(elevations);
   buildFigure();
-  buildRotHandle(elevations);
   buildDimIndicator(elevations);
   syncDimCard();
 }

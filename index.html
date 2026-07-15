@@ -306,6 +306,7 @@
     </section>
     <section>
       <button id="clearTable" style="width:100%">清空桌面</button>
+      <button id="resetAll" style="width:100%; margin-top:6px">全部重置</button>
     </section>
   </div>
 
@@ -873,6 +874,16 @@ document.getElementById('addLibItem').addEventListener('click', () => {
 document.getElementById('clearTable').addEventListener('click', () => {
   if (state.placed.length && !confirm('確定清空桌面上所有物件？（物件庫會保留）')) return;
   state.placed = [];
+  select(null);
+  saveState();
+});
+
+// 全部重置：清空桌面物件＋人偶回到預設站位（物件庫與場景設定保留）
+document.getElementById('resetAll').addEventListener('click', () => {
+  if (state.placed.length && !confirm('確定全部重置？將清空桌面上所有物件，並把人偶移回預設位置（物件庫會保留）')) return;
+  state.placed = [];
+  state.scene.figureX = null;
+  state.scene.figureY = null;
   select(null);
   saveState();
 });

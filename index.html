@@ -209,7 +209,7 @@
 <body>
 <header>
   <h1>🧱 市集擺攤陳列模擬器</h1>
-  <span class="hint">左側建立物件 → 加入桌面 → 直接在 3D 視口擺放：左鍵＝選取／拖曳物件，右鍵＝旋轉視角，中鍵＝平移，滾輪＝縮放</span>
+  <span class="hint">左側建立物件 → 加入桌面 → 直接在 3D 視口擺放：左鍵＝選取／拖曳物件，右鍵（空白）＝旋轉視角，右鍵（選取物件）＝旋轉物件，中鍵＝平移，滾輪＝縮放</span>
 </header>
 <main>
   <div id="sidebar">
@@ -279,7 +279,7 @@
         <span class="title">3D 編輯視口</span>
         <button id="btnViewTop">俯視</button>
         <button id="btnViewFront">前視</button>
-        <span class="kbd-hint">左鍵＝選取／拖曳物件，右鍵＝旋轉視角，中鍵＝平移，滾輪＝縮放</span>
+        <span class="kbd-hint">左鍵＝選取／拖曳，右鍵（選取物件）＝旋轉物件，右鍵（空白）＝旋轉視角，Shift＝精細旋轉</span>
         <div id="toolbar3d">
           <button id="btnRot" disabled>旋轉（R）</button>
           <button id="btnDup" disabled>複製（D）</button>
@@ -317,7 +317,7 @@ const DEFAULT_STATE = {
   ],
   placed: [],   // { id, itemId, cx, cy, rot }  cx/cy = 中心點（cm），rot = 任意角度（度，0–360，浮點數）
   nextId: 100,
-  scene: { bg: '#e2e8dc', groundColor: '#c6d1bd', clothColor: '#eef1e6', clothOn: true, clothDrop: 20, figureOn: false, figureH: 165, figureX: null, figureY: null },
+  scene: { bg: '#e2e8dc', groundColor: '#c6d1bd', clothColor: '#eef1e6', clothOn: true, clothDrop: 20, figureOn: false, figureH: 165, figureX: null, figureY: null, figureRot: 0 },
 };
 
 let state = loadState();
@@ -340,6 +340,7 @@ function loadState() {
   // 舊存檔沒有人偶位置欄位時補 null（null 代表沿用預設位置）
   if (s.scene.figureX === undefined) s.scene.figureX = null;
   if (s.scene.figureY === undefined) s.scene.figureY = null;
+  if (s.scene.figureRot === undefined) s.scene.figureRot = 0;
   // 舊存檔沒有的新預設道具（階梯、洞洞板）補進物件庫
   for (const def of DEFAULT_STATE.library) {
     if (def.shape && !s.library.some(i => i.shape === def.shape)) {
@@ -387,7 +388,7 @@ function effItem(p) {
 function figurePos() {
   return {
     x: state.scene.figureX ?? state.table.w / 2,
-    y: state.scene.figureY ?? state.table.d + 40,
+    y: state.scene.figureY ?? -40,
   };
 }
 
@@ -834,8 +835,7 @@ function applySceneColors() {
 let tableGroup = new THREE.Group();
 let itemGroup = new THREE.Group();
 let figureGroup = new THREE.Group();
-let handleGroup = new THREE.Group(); // 選取物件的旋轉把手（虛線＋小球）
-scene.add(tableGroup, itemGroup, figureGroup, handleGroup);
+scene.add(tableGroup, itemGroup, figureGroup);
 
 function build3dTable() {
   disposeGroup(tableGroup);
@@ -909,93 +909,121 @@ function build3dItems(elevations) {
   }
 }
 
-/* 素描木人偶（artist mannequin），比例依 state.scene.figureH 換算，位置依 figurePos()（可在 2D 圖拖曳，預設站在桌前 40cm） */
+/* 圓潤簡約人形（手臂自然垂放、灰色單色），預設站在桌子後方 */
 function buildFigure() {
   disposeGroup(figureGroup);
   const { w, d } = state.table;
   const p = figurePos();
   figureGroup.position.set(p.x - w / 2, 0, p.y - d / 2);
+  figureGroup.rotation.y = -(state.scene.figureRot ?? 0) * Math.PI / 180;
   if (!state.scene.figureOn) return;
-  const H = state.scene.figureH;
-  const bodyMat = new THREE.MeshStandardMaterial({ color: '#d8d5cf', roughness: 0.7, metalness: 0.02 });
-  const jointMat = new THREE.MeshStandardMaterial({ color: '#c2beb6', roughness: 0.7, metalness: 0.02 });
 
-  // 四肢圓柱：靠近軀幹端（rTrunkEnd）較粗，遠端（rFarEnd）較細；yFar/yTrunk 為兩端關節球中心高度
-  function limb(rTrunkEnd, rFarEnd, yFar, yTrunk, x) {
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(rTrunkEnd, rFarEnd, yTrunk - yFar, 10), bodyMat);
-    m.position.set(x, (yTrunk + yFar) / 2, 0);
-    figureGroup.add(m);
-  }
-  // 關節球
-  function ball(r, y, x = 0, z = 0) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), jointMat);
+  const H = state.scene.figureH;
+  const mat = new THREE.MeshStandardMaterial({ color: '#a0a8b0', roughness: 0.30, metalness: 0.10 });
+
+  /* 直接加 Mesh 到 figureGroup 的小工具 */
+  const mk = (geo, x = 0, y = 0, z = 0) => {
+    const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
     figureGroup.add(m);
-  }
-  // 胸腔／骨盆用的壓扁塊體（rTop/rBottom 決定上下寬窄，scale.z 壓成橢圓斷面）
-  function torsoBlock(rTop, rBottom, yBottom, yTop) {
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, yTop - yBottom, 16), bodyMat);
-    m.scale.z = 0.6;
-    m.position.y = (yTop + yBottom) / 2;
-    figureGroup.add(m);
-  }
+    return m;
+  };
 
-  // ---- 腿部（胯部高約 H*0.5，雙腿微開站立） ----
-  const hipY = H * 0.5;
-  const kneeY = H * 0.26;
-  const ankleY = H * 0.045;
-  const hipHalfW = H * 0.10;
+  /* 關鍵高度 */
+  const hipY      = H * 0.48;
+  const shoulderY = H * 0.75;
+  const neckBY    = H * 0.77;
+  const neckTY    = H * 0.83;
+  const headY     = H * 0.915;
+
+  /* 關鍵半徑 */
+  const torsoTopR = H * 0.110;
+  const hipR      = H * 0.095;
+  const legR      = H * 0.058;
+  const armR      = H * 0.050;
+  const headR     = H * 0.092;
+  const neckR     = H * 0.038;
+  const legSep    = H * 0.070; // 腿中心距中線距離
+
+  /* ---- 腿部（使用 Group 做輕微外傾） ---- */
   for (const sx of [1, -1]) {
-    const x = sx * hipHalfW;
-    // 腳：前後拉長、壓扁的橢圓，往桌子方向（-z）伸出
-    const foot = new THREE.Mesh(new THREE.SphereGeometry(H * 0.045, 12, 10), bodyMat);
-    foot.scale.set(0.8, 0.4, 1.7);
-    foot.position.set(x, H * 0.018, -H * 0.045);
-    figureGroup.add(foot);
-    ball(H * 0.018, ankleY, x);                       // 踝關節
-    limb(H * 0.019, H * 0.014, ankleY, kneeY, x);      // 小腿（膝端較粗）
-    ball(H * 0.02, kneeY, x);                          // 膝關節
-    limb(H * 0.026, H * 0.02, kneeY, hipY, x);         // 大腿（髖端較粗）
-    ball(H * 0.026, hipY, x);                          // 髖關節
+    const lg = new THREE.Group();
+    lg.position.set(sx * legSep, hipY, 0);
+    lg.rotation.z = sx * 4 * Math.PI / 180;
+    figureGroup.add(lg);
+
+    const kneeLen = H * 0.22;
+    const shinLen = H * 0.22;
+
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(legR * 1.05, legR * 0.90, kneeLen, 14), mat);
+    thigh.position.y = -kneeLen / 2;
+    lg.add(thigh);
+
+    const kneeSph = new THREE.Mesh(new THREE.SphereGeometry(legR * 0.90, 14, 10), mat);
+    kneeSph.position.y = -kneeLen;
+    lg.add(kneeSph);
+
+    const shin = new THREE.Mesh(new THREE.CylinderGeometry(legR * 0.88, legR * 0.78, shinLen, 14), mat);
+    shin.position.y = -kneeLen - shinLen / 2;
+    lg.add(shin);
+
+    /* 腳（扁橢球） */
+    const foot = new THREE.Mesh(new THREE.SphereGeometry(legR * 0.85, 14, 10), mat);
+    foot.scale.set(0.85, 0.50, 1.45);
+    foot.position.set(sx * H * 0.010, -kneeLen - shinLen - legR * 0.30, -H * 0.018);
+    lg.add(foot);
   }
 
-  // ---- 骨盆（上窄下寬） ----
-  const pelvisTopY = hipY + H * 0.09;
-  torsoBlock(H * 0.065, H * 0.10, hipY, pelvisTopY);
-  ball(H * 0.028, pelvisTopY);                          // 腰關節
+  /* ---- 軀幹 ---- */
+  mk(new THREE.SphereGeometry(hipR, 16, 12), 0, hipY, 0);
+  mk(new THREE.CylinderGeometry(torsoTopR, hipR, shoulderY - hipY, 16), 0, (hipY + shoulderY) / 2, 0);
+  mk(new THREE.SphereGeometry(torsoTopR, 16, 12), 0, shoulderY, 0);
 
-  // ---- 頭（蛋形：sphere 拉長 scale.y） ----
-  const headLen = H / 7;
-  const headR = headLen / 2.6;
-  const headBottomY = H - headLen;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(headR, 16, 12), bodyMat);
-  head.scale.y = 1.3;
-  head.position.y = headBottomY + 1.3 * headR;
-  figureGroup.add(head);
+  /* ---- 頸部 ---- */
+  mk(new THREE.CylinderGeometry(neckR * 1.1, neckR * 0.9, neckTY - neckBY, 12), 0, (neckBY + neckTY) / 2, 0);
 
-  // ---- 胸腔（上寬下窄） ----
-  const torsoTopY = headBottomY; // 與頸關節／頭部底端銜接
-  torsoBlock(H * 0.115, H * 0.075, pelvisTopY, torsoTopY);
-  ball(headR * 0.45, headBottomY);                      // 頸關節
+  /* ---- 頭（大圓球） ---- */
+  mk(new THREE.SphereGeometry(headR, 20, 16), 0, headY, 0);
 
-  // ---- 手臂（肩寬約 H*0.24，自然下垂身體兩側） ----
-  const shoulderHalfW = H * 0.12;
-  const shoulderY = torsoTopY;
-  const elbowY = shoulderY - H * 0.19;
-  const wristY = elbowY - H * 0.16;
+  /* ---- 手臂（Group 旋轉法：上臂外傾 22°，前臂再微微內彎） ---- */
   for (const sx of [1, -1]) {
-    const x = sx * shoulderHalfW;
-    ball(H * 0.03, shoulderY, x);                       // 肩關節
-    limb(H * 0.026, H * 0.019, elbowY, shoulderY, x);   // 上臂（肩端較粗）
-    ball(H * 0.02, elbowY, x);                          // 肘關節
-    limb(H * 0.018, H * 0.012, wristY, elbowY, x);      // 前臂（肘端較粗）
-    ball(H * 0.014, wristY, x);                         // 腕關節
-    // 手：小的扁橢圓
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(H * 0.045, 10, 8), jointMat);
-    hand.scale.set(0.6, 0.85, 0.35);
-    hand.position.set(x, wristY - H * 0.045, 0);
-    figureGroup.add(hand);
+    const ag = new THREE.Group();
+    ag.position.set(sx * torsoTopR * 0.88, shoulderY, 0);
+    ag.rotation.z = sx * 22 * Math.PI / 180;
+    figureGroup.add(ag);
+
+    /* 肩關節球 */
+    const shSph = new THREE.Mesh(new THREE.SphereGeometry(armR * 1.05, 14, 10), mat);
+    ag.add(shSph);
+
+    /* 上臂 */
+    const uaLen = H * 0.21;
+    const ua = new THREE.Mesh(new THREE.CylinderGeometry(armR, armR * 0.88, uaLen, 12), mat);
+    ua.position.y = -uaLen / 2;
+    ag.add(ua);
+
+    /* 肘關節球 */
+    const elbowSph = new THREE.Mesh(new THREE.SphereGeometry(armR * 0.88, 12, 10), mat);
+    elbowSph.position.y = -uaLen;
+    ag.add(elbowSph);
+
+    /* 前臂子 Group（微內彎） */
+    const fg = new THREE.Group();
+    fg.position.y = -uaLen;
+    fg.rotation.z = sx * (-8) * Math.PI / 180;
+    ag.add(fg);
+
+    const faLen = H * 0.17;
+    const fa = new THREE.Mesh(new THREE.CylinderGeometry(armR * 0.85, armR * 0.70, faLen, 12), mat);
+    fa.position.y = -faLen / 2;
+    fg.add(fa);
+
+    /* 手（圓球） */
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(armR * 0.72, 12, 10), mat);
+    hand.position.y = -faLen;
+    fg.add(hand);
   }
+
   figureGroup.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 }
 
@@ -1066,47 +1094,6 @@ function disposeGroup(g) {
   g.clear();
 }
 
-/* --- 選取物件的旋轉把手（移植自 2D 版：中心往局部 -z 伸出虛線，末端小球可拖曳旋轉） --- */
-let rotHandleInfo = null; // { id, y }：把手對應的擺放物 id 與把手所在水平面高度（世界座標）
-function buildRotHandle(elevations) {
-  disposeGroup(handleGroup);
-  rotHandleInfo = null;
-  const p = state.placed.find(q => q.id === selectedId);
-  const it = p ? effItem(p) : null;
-  if (!p || !it) return;
-  const { w, d, h } = state.table;
-  // 把手放在物件底面略上方（+1cm），rot=0 時指向局部 -z（顧客側的反方向，即桌子後側）
-  const y = h + clothOffsetY() + (elevations.get(p.id) || 0) + 1;
-  handleGroup.position.set(p.cx - w / 2, y, p.cy - d / 2);
-  handleGroup.rotation.y = -p.rot * Math.PI / 180;
-  const len = it.d / 2 + 6; // 距物件中心的距離（同 2D 版：d/2 + 6cm）
-  // 虛線：物件中心 → 把手
-  const lineGeo = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -len),
-  ]);
-  // 把手屬於編輯 gizmo，關閉深度測試讓它永遠畫在最上層，不被物件本身擋住
-  const line = new THREE.Line(lineGeo, new THREE.LineDashedMaterial({ color: 0x39423a, dashSize: 1.5, gapSize: 1.2, depthTest: false }));
-  line.computeLineDistances();
-  line.renderOrder = 10;
-  handleGroup.add(line);
-  // 小球本體
-  const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(2.5, 16, 12),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x39423a, emissiveIntensity: 0.2, depthTest: false })
-  );
-  ball.position.set(0, 0, -len);
-  ball.renderOrder = 11;
-  handleGroup.add(ball);
-  // 較大的透明命中球，讓滑鼠／手指好點一點（raycast 仍會命中透明材質）
-  const hit = new THREE.Mesh(
-    new THREE.SphereGeometry(5, 8, 6),
-    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
-  );
-  hit.position.set(0, 0, -len);
-  handleGroup.add(hit);
-  rotHandleInfo = { id: p.id, y };
-}
-
 /* --- 軌道視角（OrbitControls：右鍵旋轉、中鍵平移、滾輪縮放，含慣性阻尼；左鍵留給物件互動） --- */
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -1170,23 +1157,18 @@ function findPlacedId(obj) {
   return null;
 }
 
-let drag3d = null; // 物件互動中：{ mode: 'item' | 'figure' | 'handle', pointerId, ... }
+let drag3d = null; // 物件互動中：{ mode: 'item' | 'figure' | 'rightrot', pointerId, ... }
+let pendingDrag = null; // 左鍵按下物件但尚未超過移動門檻時的暫存資訊
 /* 觸控在空白處按下時的起點：{ pointerId, x, y, moved }，供 pointerup 判斷是否為「點一下」（未移動）以取消選取；
    有移動則代表 OrbitControls 正在接手旋轉視角，不處理 */
 let blankTouchStart = null;
 
-/* 左鍵（或觸控單指）按下：依 raycast 結果進入對應模式，優先序：旋轉把手 > 人偶 > 物件 > 空白；回傳是否命中互動物件 */
+/* 左鍵（或觸控單指）按下：依 raycast 結果進入對應模式，優先序：人偶 > 物件 > 空白；回傳是否命中互動物件 */
 function beginPrimary(evt) {
   const isTouch = evt.pointerType === 'touch';
   const { w, d, h } = state.table;
   setRayFromEvent(evt);
-  // 1) 旋轉把手（優先於一般物件）
-  if (rotHandleInfo && raycaster.intersectObject(handleGroup, true).length) {
-    drag3d = { mode: 'handle', pointerId: evt.pointerId, id: rotHandleInfo.id, planeY: rotHandleInfo.y, moved: false };
-    controls.enabled = false;
-    return true;
-  }
-  // 2) 人偶（開啟時可拖曳，拖曳平面取地面 y=0）
+  // 1) 人偶（開啟時可拖曳，拖曳平面取地面 y=0）
   if (state.scene.figureOn && raycaster.intersectObject(figureGroup, true).length) {
     const hit = rayHitPlaneY(0);
     if (hit) {
@@ -1199,36 +1181,29 @@ function beginPrimary(evt) {
     }
     return true;
   }
-  // 3) 一般物件：選取＋開始拖曳
+  // 2) 一般物件：選取＋開始拖曳
   let placedId = null;
   for (const hit of raycaster.intersectObjects(itemGroup.children, true)) {
     placedId = findPlacedId(hit.object);
     if (placedId != null) break;
   }
   if (placedId != null) {
-    // 開始拖曳時把該物件移到陣列尾端（提升堆疊優先序，疊在其他物件上方），同原本 2D 版行為
-    const idx = state.placed.findIndex(q => q.id === placedId);
-    if (idx !== -1 && idx !== state.placed.length - 1) {
-      const [item] = state.placed.splice(idx, 1);
-      state.placed.push(item);
-      saveState();
-    }
     select(placedId);
-    const p = state.placed.find(q => q.id === placedId);
-    // 拖曳平面取「該物件底面高度」的水平面，滑鼠在平面上的位移即為物件位移
+    // 不立刻進入拖曳，先記錄 pendingDrag；實際移動等 pointermove 超過門檻再啟動
     const elev = computeElevations();
     const planeY = h + clothOffsetY() + (elev.get(placedId) || 0);
-    const hit = rayHitPlaneY(planeY);
-    if (hit) {
-      drag3d = {
-        mode: 'item', pointerId: evt.pointerId, id: placedId, planeY,
-        dx: p.cx - (hit.x + w / 2), dy: p.cy - (hit.z + d / 2), moved: false,
+    const hitPt = rayHitPlaneY(planeY);
+    if (hitPt) {
+      const p = state.placed.find(q => q.id === placedId);
+      pendingDrag = {
+        pointerId: evt.pointerId, id: placedId, planeY,
+        startClientX: evt.clientX, startClientY: evt.clientY,
+        dx: p.cx - (hitPt.x + w / 2), dy: p.cy - (hitPt.z + d / 2),
       };
-      controls.enabled = false;
     }
     return true;
   }
-  // 4) 空白處：滑鼠＝取消選取（絕不旋轉視角）；觸控＝不處理，交給 OrbitControls 旋轉視角
+  // 3) 空白處：滑鼠＝取消選取（絕不旋轉視角）；觸控＝不處理，交給 OrbitControls 旋轉視角
   if (!isTouch) select(null);
   return false;
 }
@@ -1244,11 +1219,51 @@ renderer.domElement.addEventListener('pointerdown', (evt) => {
   if (drag3d) return;
   if (evt.button === 0) {
     beginPrimary(evt);
+  } else if (evt.button === 2) {
+    setRayFromEvent(evt);
+    // 優先判斷：右鍵點在人偶上 → 旋轉人偶
+    if (state.scene.figureOn && raycaster.intersectObject(figureGroup, true).length) {
+      drag3d = { mode: 'figurerot', pointerId: evt.pointerId, startX: evt.clientX, startRot: state.scene.figureRot ?? 0, moved: false };
+      controls.enabled = false;
+    } else if (selectedId != null) {
+      // 右鍵點在已選取物件上 → 旋轉物件
+      let hitSelected = false;
+      for (const hit of raycaster.intersectObjects(itemGroup.children, true)) {
+        if (findPlacedId(hit.object) === selectedId) { hitSelected = true; break; }
+      }
+      if (hitSelected) {
+        const p = state.placed.find(q => q.id === selectedId);
+        drag3d = { mode: 'rightrot', pointerId: evt.pointerId, id: selectedId, startX: evt.clientX, startRot: p.rot, moved: false };
+        controls.enabled = false;
+      }
+    }
   }
-  // 中鍵平移／右鍵旋轉視角交給 OrbitControls 處理
+  // 中鍵平移／右鍵旋轉視角（點在空白或未選取物件）交給 OrbitControls 處理
 });
 
 renderer.domElement.addEventListener('pointermove', (evt) => {
+  // pendingDrag 啟動：左鍵按下物件後，移動超過門檻才真正開始拖曳
+  if (pendingDrag && pendingDrag.pointerId === evt.pointerId && !drag3d) {
+    const mdx = evt.clientX - pendingDrag.startClientX;
+    const mdy = evt.clientY - pendingDrag.startClientY;
+    if (Math.abs(mdx) + Math.abs(mdy) > 5) {
+      const { w, d } = state.table;
+      // 移到陣列尾端提升堆疊優先序
+      const idx = state.placed.findIndex(q => q.id === pendingDrag.id);
+      if (idx !== -1 && idx !== state.placed.length - 1) {
+        const [item] = state.placed.splice(idx, 1);
+        state.placed.push(item);
+        saveState();
+      }
+      drag3d = {
+        mode: 'item', pointerId: pendingDrag.pointerId, id: pendingDrag.id,
+        planeY: pendingDrag.planeY, dx: pendingDrag.dx, dy: pendingDrag.dy, moved: false,
+      };
+      pendingDrag = null;
+      controls.enabled = false;
+    }
+    return;
+  }
   // 物件互動（拖曳移動／旋轉把手／人偶）
   if (drag3d && drag3d.pointerId === evt.pointerId) {
     const { w, d } = state.table;
@@ -1263,16 +1278,20 @@ renderer.domElement.addEventListener('pointermove', (evt) => {
         drag3d.moved = true;
         update();
       }
-    } else if (drag3d.mode === 'handle') {
+    } else if (drag3d.mode === 'figurerot') {
+      const dx = evt.clientX - drag3d.startX;
+      const snapDeg = evt.shiftKey ? 1 : 15;
+      let angle = drag3d.startRot - dx * 0.5;
+      angle = Math.round(angle / snapDeg) * snapDeg;
+      state.scene.figureRot = ((angle % 360) + 360) % 360;
+      drag3d.moved = true;
+      update();
+    } else if (drag3d.mode === 'rightrot') {
       const p = state.placed.find(q => q.id === drag3d.id);
-      const hit = rayHitPlaneY(drag3d.planeY);
-      if (p && hit) {
-        const dx = hit.x - (p.cx - w / 2);
-        const dz = hit.z - (p.cy - d / 2);
-        // 與 2D 版 atan2(dx, -dy) 同推導：把手在 rot=0 時指向局部 -z（即 2D 的 -y），
-        // 把手世界方位 (dx, dz) = (L·sinθ, -L·cosθ)，反解 θ = atan2(dx, -dz)
-        let angle = Math.atan2(dx, -dz) * 180 / Math.PI;
+      if (p) {
+        const dx = evt.clientX - drag3d.startX;
         const snapDeg = evt.shiftKey ? 1 : 15;
+        let angle = drag3d.startRot - dx * 0.5;
         angle = Math.round(angle / snapDeg) * snapDeg;
         p.rot = ((angle % 360) + 360) % 360;
         drag3d.moved = true;
@@ -1297,6 +1316,9 @@ renderer.domElement.addEventListener('pointermove', (evt) => {
 });
 
 function releasePointer(evt) {
+  if (pendingDrag && pendingDrag.pointerId === evt.pointerId) {
+    pendingDrag = null;
+  }
   if (drag3d && drag3d.pointerId === evt.pointerId) {
     if (drag3d.moved) saveState(); // 有實際移動／旋轉才存檔
     drag3d = null;
@@ -1411,12 +1433,11 @@ mobileMq.addEventListener('change', (evt) => {
 
 /* ================= main update ================= */
 function update() {
-  const elevations = computeElevations(); // 每次 update 只算一次，3D / 統計 / 旋轉把手共用
+  const elevations = computeElevations();
   renderStats(elevations);
   build3dTable();
   build3dItems(elevations);
   buildFigure();
-  buildRotHandle(elevations);
 }
 
 renderSidebar();

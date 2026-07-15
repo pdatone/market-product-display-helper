@@ -1096,10 +1096,9 @@ function buildFigure() {
     shin.position.y = -kneeLen - shinLen / 2;
     lg.add(shin);
 
-    /* 腳（扁橢球） */
+    /* 腳（圓球，與手相同，不分正反面） */
     const foot = new THREE.Mesh(new THREE.SphereGeometry(legR * 0.85, 14, 10), mat);
-    foot.scale.set(0.85, 0.50, 1.45);
-    foot.position.set(sx * H * 0.010, -kneeLen - shinLen - legR * 0.30, -H * 0.018);
+    foot.position.y = -kneeLen - shinLen + legR * 0.14;
     lg.add(foot);
   }
 
